@@ -97,6 +97,25 @@ export async function GET(request: Request) {
     `SELECT tier, COUNT(*) as c FROM leads WHERE tier IS NOT NULL${seedExcludeLeads} GROUP BY tier ORDER BY tier`
   ).all() as { tier: string; c: number }[];
 
+  // Sequence analytics
+  const seedExcludeSeqs = maybeSeedExclude(request, 'sequences');
+  const pendingApprovals = (db.prepare(
+    `SELECT COUNT(*) as c FROM sequences WHERE status = 'pending_approval'${seedExcludeSeqs}`
+  ).get() as { c: number })?.c ?? 0;
+
+  const emailsSent = (db.prepare(
+    `SELECT COUNT(*) as c FROM sequences WHERE status = 'sent'${seedExcludeSeqs}`
+  ).get() as { c: number })?.c ?? 0;
+
+  // Conversion rate: leads that replied or further / leads that were contacted
+  const contacted = (db.prepare(
+    `SELECT COUNT(*) as c FROM leads WHERE status IN ('contacted','replied','interested','booked','qualified')${seedExcludeLeads}`
+  ).get() as { c: number })?.c ?? 0;
+  const replied = (db.prepare(
+    `SELECT COUNT(*) as c FROM leads WHERE status IN ('replied','interested','booked','qualified')${seedExcludeLeads}`
+  ).get() as { c: number })?.c ?? 0;
+  const conversionRate = contacted > 0 ? Math.round((replied / contacted) * 100) : 0;
+
   return NextResponse.json({
     leads,
     funnel,
@@ -104,6 +123,9 @@ export async function GET(request: Request) {
       total: totalLeads,
       avg_score: Math.round(avgScore),
       tier_breakdown: tierBreakdown,
+      pending_approvals: pendingApprovals,
+      emails_sent: emailsSent,
+      conversion_rate: conversionRate,
     },
   });
 }

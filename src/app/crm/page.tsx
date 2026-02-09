@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef, DragEvent } from 'react';
 import {
   Contact, Search, ChevronRight, ChevronLeft, Mail, Linkedin, Star,
   Clock, Building2, User, ArrowUpDown, X, Pause, Play,
   Send, Eye, CircleDot, MessageSquare, CalendarCheck, CheckCircle, Ban,
   ChevronDown, ChevronUp, Check, XCircle, Edit3, Save, Loader2,
+  LayoutList, Kanban, AlertCircle, BarChart3, GripVertical,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
 import { useDashboard } from '@/store';
@@ -15,7 +16,14 @@ import type { Lead, Sequence, FunnelStep } from '@/types';
 interface CrmData {
   leads: Lead[];
   funnel: FunnelStep[];
-  summary: { total: number; avg_score: number; tier_breakdown: { tier: string; c: number }[] };
+  summary: {
+    total: number;
+    avg_score: number;
+    tier_breakdown: { tier: string; c: number }[];
+    pending_approvals: number;
+    emails_sent: number;
+    conversion_rate: number;
+  };
 }
 
 interface LeadDetail {
@@ -54,6 +62,8 @@ const TIER_COLORS: Record<string, string> = {
   C: 'bg-muted/30 text-muted-foreground border-border',
 };
 
+type ViewMode = 'list' | 'kanban';
+
 export default function CrmPage() {
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('');
@@ -61,6 +71,7 @@ export default function CrmPage() {
   const [selectedLead, setSelectedLead] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'score' | 'created_at'>('score');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const { realOnly } = useDashboard();
 
   const params = new URLSearchParams();
@@ -84,12 +95,28 @@ export default function CrmPage() {
     setRefreshKey(k => k + 1);
   }, []);
 
+  // Kanban drag handler
+  async function handleKanbanDrop(leadId: string, newStage: string) {
+    try {
+      const res = await fetch('/api/crm', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: leadId, status: newStage }),
+      });
+      if (!res.ok) throw new Error('Update failed');
+      setRefreshKey(k => k + 1);
+    } catch {
+      // silently fail, will refresh on next poll
+    }
+  }
+
   return (
     <div className="space-y-6 animate-in">
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-semibold">CRM</h1>
         {data?.summary && (
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
             <span><strong className="text-foreground">{data.summary.total}</strong> leads</span>
             <span>avg score <strong className="text-foreground">{data.summary.avg_score}</strong></span>
             {data.summary.tier_breakdown.map(t => (
@@ -101,7 +128,41 @@ export default function CrmPage() {
         )}
       </div>
 
-      {/* Funnel */}
+      {/* Quick Stats */}
+      {data?.summary && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="card p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <BarChart3 size={12} /> Pipeline
+            </div>
+            <div className="text-lg font-semibold">{data.summary.total}</div>
+            <div className="text-[10px] text-muted-foreground">active leads</div>
+          </div>
+          <div className="card p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <AlertCircle size={12} className="text-warning" /> Pending
+            </div>
+            <div className="text-lg font-semibold text-warning">{data.summary.pending_approvals}</div>
+            <div className="text-[10px] text-muted-foreground">emails awaiting approval</div>
+          </div>
+          <div className="card p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <Send size={12} className="text-success" /> Sent
+            </div>
+            <div className="text-lg font-semibold text-success">{data.summary.emails_sent}</div>
+            <div className="text-[10px] text-muted-foreground">emails delivered</div>
+          </div>
+          <div className="card p-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+              <Star size={12} className="text-primary" /> Conversion
+            </div>
+            <div className="text-lg font-semibold text-primary">{data.summary.conversion_rate}%</div>
+            <div className="text-[10px] text-muted-foreground">reply rate</div>
+          </div>
+        </div>
+      )}
+
+      {/* Pipeline Funnel */}
       {data?.funnel && (
         <div className="card p-4">
           <h3 className="text-sm font-medium text-muted-foreground mb-3">Pipeline</h3>
@@ -137,7 +198,7 @@ export default function CrmPage() {
         </div>
       )}
 
-      {/* Filters */}
+      {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -159,13 +220,38 @@ export default function CrmPage() {
           <option value="B">Tier B</option>
           <option value="C">Tier C</option>
         </select>
-        <button
-          onClick={() => setSortField(sortField === 'score' ? 'created_at' : 'score')}
-          className="btn btn-ghost btn-sm"
-        >
-          <ArrowUpDown size={12} />
-          {sortField === 'score' ? 'Score' : 'Date'}
-        </button>
+
+        {/* View Toggle */}
+        <div className="flex items-center border border-border/30 rounded-lg overflow-hidden">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`px-2.5 py-2 text-sm transition-colors ${
+              viewMode === 'list' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title="List view"
+          >
+            <LayoutList size={14} />
+          </button>
+          <button
+            onClick={() => setViewMode('kanban')}
+            className={`px-2.5 py-2 text-sm transition-colors ${
+              viewMode === 'kanban' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title="Board view"
+          >
+            <Kanban size={14} />
+          </button>
+        </div>
+
+        {viewMode === 'list' && (
+          <button
+            onClick={() => setSortField(sortField === 'score' ? 'created_at' : 'score')}
+            className="btn btn-ghost btn-sm"
+          >
+            <ArrowUpDown size={12} />
+            {sortField === 'score' ? 'Score' : 'Date'}
+          </button>
+        )}
         {(stageFilter || tierFilter || search) && (
           <button onClick={() => { setStageFilter(''); setTierFilter(''); setSearch(''); }} className="btn btn-ghost btn-sm text-destructive">
             <X size={12} /> Clear
@@ -173,44 +259,298 @@ export default function CrmPage() {
         )}
       </div>
 
-      {/* Lead List + Detail */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-2">
-          {sorted.length === 0 ? (
-            <div className="card p-8 text-center text-sm text-muted-foreground">No leads found</div>
-          ) : (
-            sorted.map(lead => (
-              <LeadRow
-                key={lead.id}
-                lead={lead}
-                selected={selectedLead === lead.id}
-                onClick={() => setSelectedLead(selectedLead === lead.id ? null : lead.id)}
+      {/* Main Content */}
+      {viewMode === 'list' ? (
+        /* ─── List View ──────────────────────────────────── */
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 space-y-2">
+            {sorted.length === 0 ? (
+              <div className="card p-8 text-center text-sm text-muted-foreground">No leads found</div>
+            ) : (
+              sorted.map(lead => (
+                <LeadRow
+                  key={lead.id}
+                  lead={lead}
+                  selected={selectedLead === lead.id}
+                  onClick={() => setSelectedLead(selectedLead === lead.id ? null : lead.id)}
+                />
+              ))
+            )}
+          </div>
+
+          <div className="lg:col-span-1">
+            {selectedLead ? (
+              <LeadDetailPanel
+                key={selectedLead}
+                id={selectedLead}
+                onClose={() => setSelectedLead(null)}
+                onMutate={handleMutate}
               />
-            ))
+            ) : (
+              <div className="card p-8 text-center text-sm text-muted-foreground sticky top-24">
+                <Contact size={32} className="mx-auto mb-3 opacity-30" />
+                <p>Select a lead to view details</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* ─── Kanban View ────────────────────────────────── */
+        <KanbanBoard
+          leads={sorted}
+          funnel={data?.funnel || []}
+          selectedLead={selectedLead}
+          onSelectLead={(id) => setSelectedLead(selectedLead === id ? null : id)}
+          onDropLead={handleKanbanDrop}
+          onMutate={handleMutate}
+          onCloseLead={() => setSelectedLead(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─── Kanban Board ─────────────────────────────────────── */
+
+function KanbanBoard({
+  leads,
+  funnel,
+  selectedLead,
+  onSelectLead,
+  onDropLead,
+  onMutate,
+  onCloseLead,
+}: {
+  leads: Lead[];
+  funnel: FunnelStep[];
+  selectedLead: string | null;
+  onSelectLead: (id: string) => void;
+  onDropLead: (leadId: string, newStage: string) => void;
+  onMutate: () => void;
+  onCloseLead: () => void;
+}) {
+  const [dragOverStage, setDragOverStage] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const stageLeads = STAGES.reduce<Record<string, Lead[]>>((acc, stage) => {
+    acc[stage] = leads.filter(l => l.status === stage);
+    return acc;
+  }, {});
+
+  // Also add disqualified column
+  const dqLeads = leads.filter(l => l.status === 'disqualified');
+
+  return (
+    <div className="space-y-4">
+      {/* Board + Detail side by side on lg */}
+      <div className="flex gap-4">
+        <div
+          ref={scrollRef}
+          className={`flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory ${
+            selectedLead ? 'flex-1' : 'w-full'
+          }`}
+          style={{ scrollbarWidth: 'thin' }}
+        >
+          {STAGES.map(stage => {
+            const count = stageLeads[stage]?.length || 0;
+            const funnelStep = funnel.find(f => f.name === stage);
+            const Icon = STAGE_ICONS[stage] || CircleDot;
+
+            return (
+              <KanbanColumn
+                key={stage}
+                stage={stage}
+                icon={Icon}
+                count={count}
+                leads={stageLeads[stage] || []}
+                selectedLead={selectedLead}
+                isDragOver={dragOverStage === stage}
+                onSelectLead={onSelectLead}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOverStage(stage);
+                }}
+                onDragLeave={() => setDragOverStage(null)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverStage(null);
+                  const leadId = e.dataTransfer.getData('text/plain');
+                  if (leadId) onDropLead(leadId, stage);
+                }}
+              />
+            );
+          })}
+
+          {/* Disqualified column */}
+          {dqLeads.length > 0 && (
+            <KanbanColumn
+              stage="disqualified"
+              icon={Ban}
+              count={dqLeads.length}
+              leads={dqLeads}
+              selectedLead={selectedLead}
+              isDragOver={dragOverStage === 'disqualified'}
+              onSelectLead={onSelectLead}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOverStage('disqualified');
+              }}
+              onDragLeave={() => setDragOverStage(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOverStage(null);
+                const leadId = e.dataTransfer.getData('text/plain');
+                if (leadId) onDropLead(leadId, 'disqualified');
+              }}
+            />
           )}
         </div>
 
-        <div className="lg:col-span-1">
-          {selectedLead ? (
+        {/* Detail panel in kanban mode */}
+        {selectedLead && (
+          <div className="hidden lg:block w-80 shrink-0">
             <LeadDetailPanel
               key={selectedLead}
               id={selectedLead}
-              onClose={() => setSelectedLead(null)}
-              onMutate={handleMutate}
+              onClose={onCloseLead}
+              onMutate={onMutate}
             />
-          ) : (
-            <div className="card p-8 text-center text-sm text-muted-foreground sticky top-24">
-              <Contact size={32} className="mx-auto mb-3 opacity-30" />
-              <p>Select a lead to view details</p>
-            </div>
-          )}
+          </div>
+        )}
+      </div>
+
+      {/* Mobile detail panel */}
+      {selectedLead && (
+        <div className="lg:hidden">
+          <LeadDetailPanel
+            key={`mobile-${selectedLead}`}
+            id={selectedLead}
+            onClose={onCloseLead}
+            onMutate={onMutate}
+          />
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Kanban Column ────────────────────────────────────── */
+
+function KanbanColumn({
+  stage,
+  icon: Icon,
+  count,
+  leads,
+  selectedLead,
+  isDragOver,
+  onSelectLead,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  stage: string;
+  icon: typeof Send;
+  count: number;
+  leads: Lead[];
+  selectedLead: string | null;
+  isDragOver: boolean;
+  onSelectLead: (id: string) => void;
+  onDragOver: (e: DragEvent) => void;
+  onDragLeave: () => void;
+  onDrop: (e: DragEvent) => void;
+}) {
+  return (
+    <div
+      className={`min-w-[200px] w-[200px] shrink-0 snap-start transition-colors rounded-xl ${
+        isDragOver ? 'bg-primary/10 ring-1 ring-primary/30' : ''
+      }`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {/* Column header */}
+      <div className="flex items-center gap-2 px-2 py-2 mb-2">
+        <Icon size={13} className={STAGE_COLORS[stage]} />
+        <span className="text-xs font-medium capitalize">{stage}</span>
+        <span className="text-[10px] font-mono bg-muted/50 px-1.5 py-0.5 rounded ml-auto">{count}</span>
+      </div>
+
+      {/* Cards */}
+      <div className="space-y-2 min-h-[100px] px-1">
+        {leads.map(lead => (
+          <KanbanCard
+            key={lead.id}
+            lead={lead}
+            selected={selectedLead === lead.id}
+            onSelect={() => onSelectLead(lead.id)}
+          />
+        ))}
+        {leads.length === 0 && (
+          <div className="text-[10px] text-muted-foreground text-center py-6 opacity-50">
+            Drop here
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-/* ─── Lead Row ─────────────────────────────────────────── */
+/* ─── Kanban Card ──────────────────────────────────────── */
+
+function KanbanCard({ lead, selected, onSelect }: { lead: Lead; selected: boolean; onSelect: () => void }) {
+  const isPaused = (lead as { pause_outreach?: number }).pause_outreach === 1;
+
+  function handleDragStart(e: DragEvent) {
+    e.dataTransfer.setData('text/plain', lead.id);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  return (
+    <div
+      draggable
+      onDragStart={handleDragStart}
+      onClick={onSelect}
+      className={`card p-2.5 cursor-grab active:cursor-grabbing transition-all text-left hover:border-primary/30 ${
+        selected ? 'border-primary/50 bg-primary/5' : ''
+      } ${isPaused ? 'opacity-60' : ''}`}
+    >
+      <div className="flex items-start justify-between gap-1.5 mb-1.5">
+        <span className="text-xs font-medium truncate leading-tight">
+          {lead.first_name} {lead.last_name}
+        </span>
+        {lead.tier && (
+          <span className={`text-[9px] font-semibold px-1 py-0.5 rounded border shrink-0 ${TIER_COLORS[lead.tier] || ''}`}>
+            {lead.tier}
+          </span>
+        )}
+      </div>
+      {lead.company && (
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground mb-1.5">
+          <Building2 size={9} />
+          <span className="truncate">{lead.company}</span>
+        </div>
+      )}
+      <div className="flex items-center justify-between">
+        {lead.score != null && (
+          <div className="flex items-center gap-1">
+            <div className="w-12 h-1 bg-muted rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  lead.score >= 80 ? 'bg-success' : lead.score >= 50 ? 'bg-warning' : 'bg-destructive'
+                }`}
+                style={{ width: `${lead.score}%` }}
+              />
+            </div>
+            <span className="text-[9px] font-mono text-muted-foreground">{lead.score}</span>
+          </div>
+        )}
+        {isPaused && <Pause size={10} className="text-warning" />}
+      </div>
+    </div>
+  );
+}
+
+/* ─── Lead Row (List View) ─────────────────────────────── */
 
 function LeadRow({ lead, selected, onClick }: { lead: Lead & { pause_outreach?: number }; selected: boolean; onClick: () => void }) {
   const Icon = STAGE_ICONS[lead.status] || CircleDot;
@@ -288,7 +628,6 @@ function LeadDetailPanel({ id, onClose, onMutate }: { id: string; onClose: () =>
     { interval: 30_000, key: detailRefresh },
   );
 
-  // Sync notesValue when data loads
   useEffect(() => {
     if (data?.lead?.notes !== undefined) {
       setNotesValue(data.lead.notes || '');
@@ -363,6 +702,11 @@ function LeadDetailPanel({ id, onClose, onMutate }: { id: string; onClose: () =>
   const currentStageIdx = STAGES.indexOf(lead.status as typeof STAGES[number]);
   const canAdvance = currentStageIdx >= 0 && currentStageIdx < STAGES.length - 1;
   const canRevert = currentStageIdx > 0;
+
+  // Sequence analytics
+  const sentCount = sequences.filter(s => s.status === 'sent').length;
+  const pendingCount = sequences.filter(s => s.status === 'pending_approval').length;
+  const totalSteps = sequences.length;
 
   return (
     <div className="card p-5 space-y-4 sticky top-24 animate-slide-in max-h-[calc(100vh-8rem)] overflow-y-auto">
@@ -525,17 +869,9 @@ function LeadDetailPanel({ id, onClose, onMutate }: { id: string; onClose: () =>
               className="w-full text-xs bg-muted/30 border border-border/30 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary resize-none"
             />
             <div className="flex items-center gap-2 justify-end">
+              <button onClick={() => setEditingNotes(false)} className="btn btn-ghost btn-sm text-xs">Cancel</button>
               <button
-                onClick={() => setEditingNotes(false)}
-                className="btn btn-ghost btn-sm text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  patchLead({ notes: notesValue });
-                  setEditingNotes(false);
-                }}
+                onClick={() => { patchLead({ notes: notesValue }); setEditingNotes(false); }}
                 disabled={saving}
                 className="btn btn-sm text-xs bg-primary/15 text-primary hover:bg-primary/25"
               >
@@ -577,9 +913,40 @@ function LeadDetailPanel({ id, onClose, onMutate }: { id: string; onClose: () =>
       {/* Email Sequences */}
       {sequences.length > 0 && (
         <div>
-          <h4 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-            <Send size={12} /> Email Sequences ({sequences.length})
-          </h4>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <Send size={12} /> Email Sequences ({sequences.length})
+            </h4>
+            {/* Mini analytics */}
+            <div className="flex items-center gap-2 text-[10px]">
+              {sentCount > 0 && (
+                <span className="text-success">{sentCount} sent</span>
+              )}
+              {pendingCount > 0 && (
+                <span className="text-warning">{pendingCount} pending</span>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          {totalSteps > 0 && (
+            <div className="flex items-center gap-1.5 mb-2">
+              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden flex">
+                <div
+                  className="h-full bg-success transition-all"
+                  style={{ width: `${(sentCount / totalSteps) * 100}%` }}
+                />
+                <div
+                  className="h-full bg-warning transition-all"
+                  style={{ width: `${(pendingCount / totalSteps) * 100}%` }}
+                />
+              </div>
+              <span className="text-[9px] text-muted-foreground font-mono">
+                {sentCount}/{totalSteps}
+              </span>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             {sequences.map(seq => (
               <div key={seq.id} className="bg-muted/20 rounded-lg overflow-hidden">
@@ -625,7 +992,6 @@ function LeadDetailPanel({ id, onClose, onMutate }: { id: string; onClose: () =>
                       </p>
                     )}
 
-                    {/* Approval actions for pending emails */}
                     {seq.status === 'pending_approval' && (
                       <div className="flex items-center gap-2 pt-1">
                         <button
