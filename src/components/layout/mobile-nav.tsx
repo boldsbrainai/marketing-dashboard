@@ -9,6 +9,7 @@ import {
   MoreHorizontal, Bot, Contact, Zap, Settings,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
+import { useDashboard } from '@/store';
 
 interface NavCounts {
   content: number;
@@ -40,10 +41,11 @@ export function MobileNav() {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const realOnly = useDashboard(s => s.realOnly);
 
   const { data: counts } = useSmartPoll<NavCounts>(
-    () => fetch('/api/counts').then(r => r.json()),
-    { interval: 30_000 },
+    () => fetch(`/api/counts${realOnly ? '?real=true' : ''}`).then(r => r.json()),
+    { interval: 30_000, key: realOnly },
   );
 
   // Close menu on outside tap

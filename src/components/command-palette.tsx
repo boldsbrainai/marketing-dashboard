@@ -6,6 +6,7 @@ import {
   Search, User, PenLine, Radio, FlaskConical, List,
   Gauge, MessageCircle, Mail, BarChart3, ArrowRight,
 } from 'lucide-react';
+import { useDashboard } from '@/store';
 
 interface SearchResult {
   id: string | number;
@@ -44,6 +45,7 @@ const CATEGORY_ROUTES: Record<string, string> = {
 };
 
 export function CommandPalette() {
+  const realOnly = useDashboard(s => s.realOnly);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -83,7 +85,7 @@ export function CommandPalette() {
     }
     setLoading(true);
     const timer = setTimeout(() => {
-      fetch(`/api/search?q=${encodeURIComponent(query)}`)
+      fetch(`/api/search?q=${encodeURIComponent(query)}${realOnly ? '&real=true' : ''}`)
         .then(r => r.json())
         .then(data => {
           setResults(data.results || []);

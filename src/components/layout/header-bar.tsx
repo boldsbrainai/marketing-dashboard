@@ -88,10 +88,11 @@ function SeedToggle({ active, onToggle }: { active: boolean; onToggle: () => voi
 function NotificationBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const realOnly = useDashboard(s => s.realOnly);
 
   const { data: notifications, refetch } = useSmartPoll<Notification[]>(
-    () => fetch('/api/notifications?limit=20').then(r => r.json()),
-    { interval: 30_000 },
+    () => fetch(`/api/notifications?limit=20${realOnly ? '&real=true' : ''}`).then(r => r.json()),
+    { interval: 30_000, key: realOnly },
   );
 
   const unreadCount = notifications?.filter(n => !n.read).length ?? 0;

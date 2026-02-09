@@ -42,13 +42,16 @@ function getAgentBriefs(excludeSeed: boolean): AgentBrief[] {
     let lastActionAt: string | undefined;
 
     if (agentActions.length > 0) {
+      const sf = excludeSeed
+        ? ` AND NOT EXISTS (SELECT 1 FROM seed_registry sr WHERE sr.table_name = 'activity_log' AND sr.record_id = CAST(activity_log.id AS TEXT))`
+        : '';
       const countRow = db.prepare(
-        `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND date(ts) = ?`
+        `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND date(ts) = ?${sf}`
       ).get(...agentActions, today) as { c: number };
       actionsToday = countRow?.c ?? 0;
 
       const lastRow = db.prepare(
-        `SELECT action, detail, ts FROM activity_log WHERE action IN (${placeholders}) ORDER BY ts DESC LIMIT 1`
+        `SELECT action, detail, ts FROM activity_log WHERE action IN (${placeholders})${sf} ORDER BY ts DESC LIMIT 1`
       ).get(...agentActions) as { action: string; detail: string; ts: string } | undefined;
       if (lastRow) {
         lastAction = lastRow.detail || lastRow.action;

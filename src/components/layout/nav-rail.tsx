@@ -8,6 +8,7 @@ import {
   Bot, Contact, Zap, Settings,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
+import { useDashboard } from '@/store';
 
 interface NavCounts {
   content: number;
@@ -33,10 +34,11 @@ const NAV_ITEMS = [
 
 export function NavRail() {
   const pathname = usePathname();
+  const realOnly = useDashboard(s => s.realOnly);
 
   const { data: counts } = useSmartPoll<NavCounts>(
-    () => fetch('/api/counts').then(r => r.json()),
-    { interval: 30_000 },
+    () => fetch(`/api/counts${realOnly ? '?real=true' : ''}`).then(r => r.json()),
+    { interval: 30_000, key: realOnly },
   );
 
   return (

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { PenLine, MessageCircle, Mail, Search, Activity, Info, X, Radio, Bell } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
+import { useDashboard } from '@/store';
 import { timeAgo } from '@/lib/utils';
 import type { ActivityEntry } from '@/types';
 
@@ -28,13 +29,17 @@ const ACTION_COLORS: Record<string, string> = {
 
 export function LiveFeed({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [filter, setFilter] = useState('');
+  const realOnly = useDashboard(s => s.realOnly);
 
   const { data: entries } = useSmartPoll<ActivityEntry[]>(
     () => {
-      const params = filter ? `?action=${filter}&limit=50` : '?limit=50';
-      return fetch(`/api/activity${params}`).then(r => r.json());
+      const p = new URLSearchParams();
+      if (filter) p.set('action', filter);
+      p.set('limit', '50');
+      if (realOnly) p.set('real', 'true');
+      return fetch(`/api/activity?${p}`).then(r => r.json());
     },
-    { interval: 15_000, enabled: open },
+    { interval: 15_000, enabled: open, key: `${filter}-${realOnly}` },
   );
 
   return (

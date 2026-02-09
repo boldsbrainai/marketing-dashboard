@@ -6,6 +6,7 @@ import {
   Circle, Activity, Calendar,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
+import { useDashboard } from '@/store';
 import { timeAgo } from '@/lib/utils';
 import type { AgentRuntime, ActivityEntry } from '@/types';
 import type { AgentDefinition, CronJob, AgentSkill } from '@/lib/agent-config';
@@ -34,9 +35,11 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function AgentsPage() {
+  const realOnly = useDashboard(s => s.realOnly);
+
   const { data: agents, loading } = useSmartPoll<AgentWithRuntime[]>(
-    () => fetch('/api/agents').then(r => r.json()),
-    { interval: 30_000 },
+    () => fetch(`/api/agents${realOnly ? '?real=true' : ''}`).then(r => r.json()),
+    { interval: 30_000, key: realOnly },
   );
 
   if (!agents || loading) {

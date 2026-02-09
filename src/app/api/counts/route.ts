@@ -1,30 +1,32 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
+import { maybeSeedExclude } from '@/lib/seed-filter';
 
 // Lightweight endpoint — returns pending counts for nav badges
 // Polled by nav-rail every 30s
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const db = getDb();
+    const sf = (table: string) => maybeSeedExclude(req, table);
 
     const content = (db.prepare(
-      `SELECT COUNT(*) as c FROM content_posts WHERE status = 'pending_approval'`
+      `SELECT COUNT(*) as c FROM content_posts WHERE status = 'pending_approval'${sf('content_posts')}`
     ).get() as { c: number })?.c ?? 0;
 
     const outreach = (db.prepare(
-      `SELECT COUNT(*) as c FROM sequences WHERE status = 'pending_approval'`
+      `SELECT COUNT(*) as c FROM sequences WHERE status = 'pending_approval'${sf('sequences')}`
     ).get() as { c: number })?.c ?? 0;
 
     const signals_today = (db.prepare(
-      `SELECT COUNT(*) as c FROM signals WHERE date = date('now')`
+      `SELECT COUNT(*) as c FROM signals WHERE date = date('now')${sf('signals')}`
     ).get() as { c: number })?.c ?? 0;
 
     const unread_notifications = (db.prepare(
-      `SELECT COUNT(*) as c FROM notifications WHERE read = 0`
+      `SELECT COUNT(*) as c FROM notifications WHERE read = 0${sf('notifications')}`
     ).get() as { c: number })?.c ?? 0;
 
     const new_leads = (db.prepare(
-      `SELECT COUNT(*) as c FROM leads WHERE status = 'new'`
+      `SELECT COUNT(*) as c FROM leads WHERE status = 'new'${sf('leads')}`
     ).get() as { c: number })?.c ?? 0;
 
     return NextResponse.json({
