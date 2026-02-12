@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
-import { isRealMode, maybeSeedExclude } from '@/lib/seed-filter';
+import { isRealMode } from '@/lib/seed-filter';
 import { getAgents, ACTION_TO_AGENT } from '@/lib/agent-config';
 import type { AgentStatus, AgentStats, ActivityEntry } from '@/types';
 import fs from 'fs';
 import path from 'path';
 import { requireApiUser } from '@/lib/api-auth';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
 export const dynamic = 'force-dynamic';
-const OPENCLAW_DIR = '/home/leads/.openclaw';
-const OPENCLAW_CONFIG = path.join(OPENCLAW_DIR, 'openclaw.json');
 
 interface AgentModelConfig {
   primary: string;
@@ -23,10 +22,19 @@ interface UsageTotals {
   cost_week: number;
 }
 
-function getAgentModelRouting(agentId: string): AgentModelConfig | null {
+function getInstanceIdFromRequest(req: NextRequest): string | null {
   try {
-    if (!fs.existsSync(OPENCLAW_CONFIG)) return null;
-    const raw = fs.readFileSync(OPENCLAW_CONFIG, 'utf-8');
+    const url = new URL(req.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
+
+function getAgentModelRouting(openclawConfigPath: string, agentId: string): AgentModelConfig | null {
+  try {
+    if (!fs.existsSync(openclawConfigPath)) return null;
+    const raw = fs.readFileSync(openclawConfigPath, 'utf-8');
     const config = JSON.parse(raw) as {
       agents?: {
         defaults?: { model?: unknown };
@@ -35,7 +43,7 @@ function getAgentModelRouting(agentId: string): AgentModelConfig | null {
     };
     const defaults = config.agents?.defaults?.model;
     const list = config.agents?.list ?? [];
-    const agent = list.find(a => a.id === agentId);
+    const agent = list.find((a) => a.id === agentId);
     const selected = agent?.model ?? defaults;
 
     if (!selected) return null;
@@ -58,7 +66,7 @@ function getAgentModelRouting(agentId: string): AgentModelConfig | null {
   return null;
 }
 
-function getUsageTotals(agentId: string): UsageTotals {
+function getUsageTotals(agentsDir: string, agentId: string): UsageTotals {
   const out: UsageTotals = {
     tokens_today: 0,
     tokens_week: 0,
@@ -66,14 +74,14 @@ function getUsageTotals(agentId: string): UsageTotals {
     cost_week: 0,
   };
 
-  const sessionsDir = path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions');
+  const sessionsDir = path.join(agentsDir, agentId, 'sessions');
   if (!fs.existsSync(sessionsDir)) return out;
 
   const now = Date.now();
   const todayStr = new Date(now).toISOString().slice(0, 10);
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
 
-  const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.jsonl'));
+  const files = fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.jsonl'));
   for (const file of files) {
     const filePath = path.join(sessionsDir, file);
     let content: string;
@@ -128,6 +136,11 @@ function getUsageTotals(agentId: string): UsageTotals {
 export async function GET(req: NextRequest) {
   const auth = requireApiUser(req as Request);
   if (auth) return auth;
+
+  const instanceId = getInstanceIdFromRequest(req);
+  const instance = getInstance(instanceId);
+  const { openclawConfigPath, agentsDir } = resolveOpenClawPaths(instance);
+
   const db = getDb();
   const now = Date.now();
   const excludeSeed = isRealMode(req);
@@ -135,7 +148,7 @@ export async function GET(req: NextRequest) {
     ? ` AND NOT EXISTS (SELECT 1 FROM seed_registry sr WHERE sr.table_name = 'activity_log' AND sr.record_id = CAST(activity_log.id AS TEXT))`
     : '';
 
-  const agents = getAgents().map((agent) => {
+  const agents = getAgents(instance.id).map((agent) => {
     // Get actions attributable to this agent
     const agentActions = Object.entries(ACTION_TO_AGENT)
       .filter(([, v]) => v.agent === agent.id)
@@ -145,47 +158,66 @@ export async function GET(req: NextRequest) {
 
     // Stats: today
     const today = new Date().toISOString().slice(0, 10);
-    const todayCount = agentActions.length > 0
-      ? (db.prepare(
-          `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND date(ts) = ?${sf}`
-        ).get(...agentActions, today) as { c: number })?.c ?? 0
-      : 0;
+    const todayCount =
+      agentActions.length > 0
+        ? (
+            db
+              .prepare(
+                `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND date(ts) = ?${sf}`,
+              )
+              .get(...agentActions, today) as { c: number }
+          )?.c ?? 0
+        : 0;
 
     // Stats: this week
-    const weekCount = agentActions.length > 0
-      ? (db.prepare(
-          `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND ts > datetime('now', '-7 days')${sf}`
-        ).get(...agentActions) as { c: number })?.c ?? 0
-      : 0;
+    const weekCount =
+      agentActions.length > 0
+        ? (
+            db
+              .prepare(
+                `SELECT COUNT(*) as c FROM activity_log WHERE action IN (${placeholders}) AND ts > datetime('now', '-7 days')${sf}`,
+              )
+              .get(...agentActions) as { c: number }
+          )?.c ?? 0
+        : 0;
 
     // Last activity
-    const lastActivity = agentActions.length > 0
-      ? db.prepare(
-          `SELECT action, detail, ts FROM activity_log WHERE action IN (${placeholders})${sf} ORDER BY ts DESC LIMIT 1`
-        ).get(...agentActions) as { action: string; detail: string; ts: string } | undefined
-      : undefined;
+    const lastActivity =
+      agentActions.length > 0
+        ? (db
+            .prepare(
+              `SELECT action, detail, ts FROM activity_log WHERE action IN (${placeholders})${sf} ORDER BY ts DESC LIMIT 1`,
+            )
+            .get(...agentActions) as { action: string; detail: string; ts: string } | undefined)
+        : undefined;
 
     // Top skills (by action count, last 30 days)
-    const skillCounts = agentActions.length > 0
-      ? db.prepare(
-          `SELECT action, COUNT(*) as c FROM activity_log
-           WHERE action IN (${placeholders}) AND ts > datetime('now', '-30 days')${sf}
-           GROUP BY action ORDER BY c DESC LIMIT 5`
-        ).all(...agentActions) as { action: string; c: number }[]
-      : [];
+    const skillCounts =
+      agentActions.length > 0
+        ? (db
+            .prepare(
+              `SELECT action, COUNT(*) as c FROM activity_log
+               WHERE action IN (${placeholders}) AND ts > datetime('now', '-30 days')${sf}
+               GROUP BY action ORDER BY c DESC LIMIT 5`,
+            )
+            .all(...agentActions) as { action: string; c: number }[])
+        : [];
 
-    const topSkills = skillCounts.map(s => ({
+    const topSkills = skillCounts.map((s) => ({
       skill: ACTION_TO_AGENT[s.action]?.skill || s.action,
       count: s.c,
     }));
 
     // Recent activity (last 10)
-    const recentActivity = agentActions.length > 0
-      ? db.prepare(
-          `SELECT id, ts, action, detail, result FROM activity_log
-           WHERE action IN (${placeholders})${sf} ORDER BY ts DESC LIMIT 10`
-        ).all(...agentActions) as ActivityEntry[]
-      : [];
+    const recentActivity =
+      agentActions.length > 0
+        ? (db
+            .prepare(
+              `SELECT id, ts, action, detail, result FROM activity_log
+               WHERE action IN (${placeholders})${sf} ORDER BY ts DESC LIMIT 10`,
+            )
+            .all(...agentActions) as ActivityEntry[])
+        : [];
 
     // Derive status
     let status: AgentStatus = 'planned';
@@ -207,13 +239,13 @@ export async function GET(req: NextRequest) {
       top_skills: topSkills,
     };
 
-    const usage = getUsageTotals(agent.id);
+    const usage = getUsageTotals(agentsDir, agent.id);
     stats.tokens_today = usage.tokens_today;
     stats.tokens_week = usage.tokens_week;
     stats.cost_today = usage.cost_today;
     stats.cost_week = usage.cost_week;
 
-    const modelRouting = getAgentModelRouting(agent.id);
+    const modelRouting = getAgentModelRouting(openclawConfigPath, agent.id);
 
     return {
       ...agent,
@@ -227,3 +259,4 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json(agents);
 }
+

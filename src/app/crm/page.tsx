@@ -78,6 +78,14 @@ export default function CrmPage() {
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('');
   const [tierFilter, setTierFilter] = useState('');
+  const [nowMs, setNowMs] = useState<number | null>(null);
+
+  // Avoid calling Date.now() during render (react-hooks/purity).
+  useEffect(() => {
+    setNowMs(Date.now());
+    const t = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
   const [selectedLead, setSelectedLead] = useState<string | null>(null);
   const [sortField, setSortField] = useState<'score' | 'created_at'>('score');
   const [refreshKey, setRefreshKey] = useState(0);
@@ -357,7 +365,7 @@ export default function CrmPage() {
           </div>
           <div className="panel-body space-y-3">
             {(() => {
-              const now = Date.now();
+              const now = nowMs ?? 0;
               const overdue = tasksDue.filter(t => new Date(t.next_action_at as string).getTime() < now);
               const dueSoon = tasksDue.filter(t => {
                 const ts = new Date(t.next_action_at as string).getTime();
@@ -383,7 +391,7 @@ export default function CrmPage() {
                           </Link>
                           <div className="flex items-center gap-2">
                             <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                              new Date(task.next_action_at as string).getTime() < Date.now()
+                              new Date(task.next_action_at as string).getTime() < now
                                 ? 'bg-destructive/15 text-destructive'
                                 : 'bg-warning/15 text-warning'
                             }`}>
@@ -428,6 +436,7 @@ export default function CrmPage() {
                 <LeadRow
                   key={lead.id}
                   lead={lead}
+                  nowMs={nowMs}
                   slaStaleDays={slaStaleDays}
                   slaNewDays={slaNewDays}
                   selected={selectedLead === lead.id}
@@ -445,6 +454,7 @@ export default function CrmPage() {
               onClose={() => setSelectedLead(null)}
               onMutate={handleMutate}
               canEdit={canEdit}
+              nowMs={nowMs}
               slaStaleDays={slaStaleDays}
               slaNewDays={slaNewDays}
             />
@@ -462,6 +472,7 @@ export default function CrmPage() {
           leads={sorted}
           funnel={data?.funnel || []}
           selectedLead={selectedLead}
+          nowMs={nowMs}
           onSelectLead={(id) => setSelectedLead(selectedLead === id ? null : id)}
           onDropLead={handleKanbanDrop}
           onMutate={handleMutate}
@@ -481,6 +492,7 @@ function KanbanBoard({
   leads,
   funnel,
   selectedLead,
+  nowMs,
   onSelectLead,
   onDropLead,
   onMutate,
@@ -492,6 +504,7 @@ function KanbanBoard({
   leads: Lead[];
   funnel: FunnelStep[];
   selectedLead: string | null;
+  nowMs: number | null;
   onSelectLead: (id: string) => void;
   onDropLead: (leadId: string, newStage: string) => void;
   onMutate: () => void;
@@ -536,6 +549,7 @@ function KanbanBoard({
                 count={count}
                 leads={stageLeads[stage] || []}
                 selectedLead={selectedLead}
+                nowMs={nowMs}
                 canEdit={canEdit}
                 slaStaleDays={slaStaleDays}
                 slaNewDays={slaNewDays}
@@ -566,6 +580,7 @@ function KanbanBoard({
               count={rejectedLeads.length}
               leads={rejectedLeads}
               selectedLead={selectedLead}
+              nowMs={nowMs}
               canEdit={canEdit}
               slaStaleDays={slaStaleDays}
               slaNewDays={slaNewDays}
@@ -595,6 +610,7 @@ function KanbanBoard({
               count={dqLeads.length}
               leads={dqLeads}
               selectedLead={selectedLead}
+              nowMs={nowMs}
               canEdit={canEdit}
               slaStaleDays={slaStaleDays}
               slaNewDays={slaNewDays}
@@ -626,6 +642,7 @@ function KanbanBoard({
             onClose={onCloseLead}
             onMutate={onMutate}
             canEdit={canEdit}
+            nowMs={nowMs}
             slaStaleDays={slaStaleDays}
             slaNewDays={slaNewDays}
           />
@@ -642,6 +659,7 @@ function KanbanBoard({
             onClose={onCloseLead}
             onMutate={onMutate}
             canEdit={canEdit}
+            nowMs={nowMs}
             slaStaleDays={slaStaleDays}
             slaNewDays={slaNewDays}
           />
@@ -659,6 +677,7 @@ function KanbanColumn({
   count,
   leads,
   selectedLead,
+  nowMs,
   canEdit,
   slaStaleDays,
   slaNewDays,
@@ -673,6 +692,7 @@ function KanbanColumn({
   count: number;
   leads: Lead[];
   selectedLead: string | null;
+  nowMs: number | null;
   canEdit: boolean;
   slaStaleDays: number;
   slaNewDays: number;
@@ -705,6 +725,7 @@ function KanbanColumn({
             key={lead.id}
             lead={lead}
             selected={selectedLead === lead.id}
+            nowMs={nowMs}
             canEdit={canEdit}
             slaStaleDays={slaStaleDays}
             slaNewDays={slaNewDays}
@@ -723,13 +744,17 @@ function KanbanColumn({
 
 /* ─── Kanban Card ──────────────────────────────────────── */
 
-function KanbanCard({ lead, selected, onSelect, canEdit, slaStaleDays, slaNewDays }: { lead: Lead; selected: boolean; onSelect: () => void; canEdit: boolean; slaStaleDays: number; slaNewDays: number }) {
+function KanbanCard({ lead, selected, onSelect, nowMs, canEdit, slaStaleDays, slaNewDays }: { lead: Lead; selected: boolean; onSelect: () => void; nowMs: number | null; canEdit: boolean; slaStaleDays: number; slaNewDays: number }) {
   const isPaused = (lead as { pause_outreach?: number }).pause_outreach === 1;
   const missingEmail = !lead.email;
   const missingCompany = !lead.company;
   const missingIndustry = !lead.industry_segment;
-  const staleDays = lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
-  const newDays = !lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const staleDays = (nowMs != null && lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const newDays = (nowMs != null && !lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
 
   function handleDragStart(e: DragEvent) {
     if (!canEdit) return;
@@ -819,14 +844,18 @@ function KanbanCard({ lead, selected, onSelect, canEdit, slaStaleDays, slaNewDay
 
 /* ─── Lead Row (List View) ─────────────────────────────── */
 
-function LeadRow({ lead, selected, onClick, slaStaleDays, slaNewDays }: { lead: Lead & { pause_outreach?: number }; selected: boolean; onClick: () => void; slaStaleDays: number; slaNewDays: number }) {
+function LeadRow({ lead, selected, onClick, nowMs, slaStaleDays, slaNewDays }: { lead: Lead & { pause_outreach?: number }; selected: boolean; onClick: () => void; nowMs: number | null; slaStaleDays: number; slaNewDays: number }) {
   const Icon = STAGE_ICONS[lead.status] || CircleDot;
   const isPaused = (lead as { pause_outreach?: number }).pause_outreach === 1;
   const missingEmail = !lead.email;
   const missingCompany = !lead.company;
   const missingIndustry = !lead.industry_segment;
-  const staleDays = lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
-  const newDays = !lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const staleDays = (nowMs != null && lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const newDays = (nowMs != null && !lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
   return (
     <button
       onClick={onClick}
@@ -931,7 +960,7 @@ function LeadRow({ lead, selected, onClick, slaStaleDays, slaNewDays }: { lead: 
 
 /* ─── Lead Detail Panel ────────────────────────────────── */
 
-function LeadDetailPanel({ id, onClose, onMutate, canEdit, slaStaleDays, slaNewDays }: { id: string; onClose: () => void; onMutate: () => void; canEdit: boolean; slaStaleDays: number; slaNewDays: number }) {
+function LeadDetailPanel({ id, onClose, onMutate, canEdit, nowMs, slaStaleDays, slaNewDays }: { id: string; onClose: () => void; onMutate: () => void; canEdit: boolean; nowMs: number | null; slaStaleDays: number; slaNewDays: number }) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [notesValue, setNotesValue] = useState('');
   const [nextAction, setNextAction] = useState('');
@@ -1027,8 +1056,12 @@ function LeadDetailPanel({ id, onClose, onMutate, canEdit, slaStaleDays, slaNewD
   const currentStageIdx = STAGES.indexOf(lead.status as typeof STAGES[number]);
   const canAdvance = currentStageIdx >= 0 && currentStageIdx < STAGES.length - 1;
   const canRevert = currentStageIdx > 0;
-  const staleDays = lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
-  const newDays = !lead.last_touch_at ? Math.floor((Date.now() - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24)) : null;
+  const staleDays = (nowMs != null && lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const newDays = (nowMs != null && !lead.last_touch_at)
+    ? Math.floor((nowMs - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
 
   // Sequence analytics
   const sentCount = sequences.filter(s => s.status === 'sent').length;

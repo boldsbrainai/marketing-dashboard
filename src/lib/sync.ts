@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb } from './db';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const SYNC_INTERVAL = 30_000; // 30 seconds
 
 let syncTimer: ReturnType<typeof setInterval> | null = null;

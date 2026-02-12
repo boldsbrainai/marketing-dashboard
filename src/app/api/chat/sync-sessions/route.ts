@@ -2,11 +2,18 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
 import { requireApiUser } from '@/lib/api-auth';
 import { getAgentIds } from '@/lib/agent-config';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
-const OPENCLAW_DIR = '/home/leads/.openclaw';
+function getInstanceId(request: Request): string | null {
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
 
 interface SessionEntry {
   type: string;
@@ -28,28 +35,32 @@ interface SessionEntry {
 export async function POST(request: Request) {
   const auth = requireApiUser(request as Request);
   if (auth) return auth;
+
+  const instance = getInstance(getInstanceId(request));
+  const { agentsDir } = resolveOpenClawPaths(instance);
+
   const db = getDb();
   let imported = 0;
   let skipped = 0;
   const errors: string[] = [];
-  const agentIds = getAgentIds();
+  const agentIds = getAgentIds(instance.id);
 
   for (const agentId of agentIds) {
-    const sessionsDir = path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions');
+    const sessionsDir = path.join(agentsDir, agentId, 'sessions');
     if (!fs.existsSync(sessionsDir)) continue;
 
-    const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.jsonl'));
+    const files = fs.readdirSync(sessionsDir).filter((f) => f.endsWith('.jsonl'));
 
     for (const file of files) {
       const filePath = path.join(sessionsDir, file);
       const sessionId = file.replace('.jsonl', '');
-      const conversationId = `session:${agentId}:${sessionId}`;
+      const conversationId = `session:${instance.id}:${agentId}:${sessionId}`;
 
       try {
         // Check last sync position
-        const syncState = db.prepare(
-          'SELECT last_offset FROM session_sync WHERE session_file = ?'
-        ).get(filePath) as { last_offset: number } | undefined;
+        const syncState = db
+          .prepare('SELECT last_offset FROM session_sync WHERE session_file = ?')
+          .get(filePath) as { last_offset: number } | undefined;
 
         const lastOffset = syncState?.last_offset || 0;
 
@@ -60,15 +71,13 @@ export async function POST(request: Request) {
           continue; // No new data
         }
 
-        // Read new content from last offset
+        // Read new content from last offset (simple full read)
         const content = fs.readFileSync(filePath, 'utf-8');
-        const lines = content.split('\n').filter(l => l.trim());
+        const lines = content.split('\n').filter((l) => l.trim());
 
-        // Process lines (we track by byte offset, but for simplicity use line count)
-        // Since JSONL is append-only, we can skip lines we already processed
-        const existingCount = db.prepare(
-          'SELECT COUNT(*) as c FROM messages WHERE conversation_id = ?'
-        ).get(conversationId) as { c: number };
+        const existingCount = db
+          .prepare('SELECT COUNT(*) as c FROM messages WHERE conversation_id = ?')
+          .get(conversationId) as { c: number };
 
         // Parse all message entries
         const messageEntries: Array<{ role: string; text: string; timestamp: string }> = [];
@@ -81,8 +90,7 @@ export async function POST(request: Request) {
             const { role, content: contentBlocks } = entry.message;
 
             if (role === 'user') {
-              // Extract user message text
-              const textBlock = contentBlocks?.find(b => b.type === 'text');
+              const textBlock = contentBlocks?.find((b) => b.type === 'text');
               if (textBlock?.text) {
                 messageEntries.push({
                   role: 'user',
@@ -91,9 +99,11 @@ export async function POST(request: Request) {
                 });
               }
             } else if (role === 'assistant') {
-              // Extract assistant text blocks only (skip thinking, toolCall)
-              const textBlocks = contentBlocks?.filter(b => b.type === 'text') || [];
-              const combinedText = textBlocks.map(b => b.text).filter(Boolean).join('\n\n');
+              const textBlocks = contentBlocks?.filter((b) => b.type === 'text') || [];
+              const combinedText = textBlocks
+                .map((b) => b.text)
+                .filter(Boolean)
+                .join('\n\n');
               if (combinedText) {
                 messageEntries.push({
                   role: 'assistant',
@@ -102,7 +112,6 @@ export async function POST(request: Request) {
                 });
               }
             }
-            // Skip toolResult entries — internal mechanics
           } catch {
             // Skip malformed lines
           }
@@ -125,6 +134,7 @@ export async function POST(request: Request) {
               const metadata = JSON.stringify({
                 source: 'session_sync',
                 session_id: sessionId,
+                instance: instance.id,
               });
 
               insert.run(conversationId, fromAgent, toAgent, entry.text, metadata, ts);
@@ -135,26 +145,27 @@ export async function POST(request: Request) {
           insertMany(toImport);
 
           // Create notification for new session messages
-          if (toImport.length > 0) {
-            const agentLabel = agentId.charAt(0).toUpperCase() + agentId.slice(1);
-            const firstUserMsg = toImport.find(e => e.role === 'user');
-            let title = `${agentLabel} session activity`;
+          const agentLabel = agentId.charAt(0).toUpperCase() + agentId.slice(1);
+          const firstUserMsg = toImport.find((e) => e.role === 'user');
+          let title = `${agentLabel} session activity`;
 
-            // Try to extract cron job name
-            if (firstUserMsg) {
-              const cronMatch = firstUserMsg.text.match(/\[cron:[\w-]+\s+([^\]]+)\]/);
-              if (cronMatch) title = `${agentLabel}: ${cronMatch[1]}`;
-              else if (firstUserMsg.text.startsWith('[Telegram')) title = `${agentLabel}: Telegram message`;
-            }
-
-            const lastResponse = [...toImport].reverse().find(e => e.role === 'assistant');
-            const preview = lastResponse ? lastResponse.text.slice(0, 120) : `${toImport.length} new messages`;
-
-            db.prepare(`
-              INSERT INTO notifications (type, severity, title, message, data)
-              VALUES ('session', 'info', ?, ?, ?)
-            `).run(title, preview, JSON.stringify({ conversation_id: conversationId, agent_id: agentId, count: toImport.length }));
+          if (firstUserMsg) {
+            const cronMatch = firstUserMsg.text.match(/\\[cron:[\\w-]+\\s+([^\\]]+)\\]/);
+            if (cronMatch) title = `${agentLabel}: ${cronMatch[1]}`;
+            else if (firstUserMsg.text.startsWith('[Telegram')) title = `${agentLabel}: Telegram message`;
           }
+
+          const lastResponse = [...toImport].reverse().find((e) => e.role === 'assistant');
+          const preview = lastResponse ? lastResponse.text.slice(0, 120) : `${toImport.length} new messages`;
+
+          db.prepare(`
+            INSERT INTO notifications (type, severity, title, message, data)
+            VALUES ('session', 'info', ?, ?, ?)
+          `).run(
+            title,
+            preview,
+            JSON.stringify({ conversation_id: conversationId, agent_id: agentId, count: toImport.length, instance: instance.id }),
+          );
         }
 
         // Update sync state
@@ -165,14 +176,14 @@ export async function POST(request: Request) {
             last_offset = excluded.last_offset,
             last_synced_at = excluded.last_synced_at
         `).run(filePath, stat.size);
-
       } catch (err) {
-        errors.push(`${agentId}/${file}: ${err}`);
+        errors.push(`${instance.id}/${agentId}/${file}: ${err}`);
       }
     }
   }
 
   return NextResponse.json({
+    instance: instance.id,
     imported,
     skipped,
     errors: errors.length > 0 ? errors : undefined,
@@ -192,3 +203,4 @@ export async function GET(request: Request) {
 }
 
 export const dynamic = 'force-dynamic';
+

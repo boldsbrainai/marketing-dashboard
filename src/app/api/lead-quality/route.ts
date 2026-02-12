@@ -1,10 +1,23 @@
 import { NextResponse } from 'next/server';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const LEADS_PATH = path.join(STATE_DIR, 'leads.json');
 const SEQUENCES_PATH = path.join(STATE_DIR, 'sequences.json');
+
+type LeadStateRow = {
+  tier?: unknown;
+  score?: unknown;
+  created_at?: unknown;
+  source?: unknown;
+  sources?: unknown;
+};
+
+type SequenceStateRow = {
+  status?: unknown;
+};
 
 function readJson<T>(filePath: string, fallback: T): T {
   try {
@@ -23,8 +36,8 @@ function parseDate(value?: string) {
 
 export async function GET() {
   try {
-    const leads = readJson<any[]>(LEADS_PATH, []);
-    const sequences = readJson<any[]>(SEQUENCES_PATH, []);
+    const leads = readJson<LeadStateRow[]>(LEADS_PATH, []);
+    const sequences = readJson<SequenceStateRow[]>(SEQUENCES_PATH, []);
 
     const tierCounts: Record<string, number> = { A: 0, B: 0, C: 0, unknown: 0 };
     const scores: number[] = [];
@@ -42,29 +55,32 @@ export async function GET() {
     const sourceAgg: Record<string, { count: number; tierA: number; scores: number[] }> = {};
 
     for (const lead of leads) {
-      if (lead?.tier && tierCounts[lead.tier] !== undefined) {
-        tierCounts[lead.tier] += 1;
+      const tier = typeof lead.tier === 'string' ? lead.tier : null;
+      if (tier && tierCounts[tier] !== undefined) {
+        tierCounts[tier] += 1;
       } else {
         tierCounts.unknown += 1;
       }
-      if (typeof lead?.score === 'number') scores.push(lead.score);
 
-      const created = parseDate(lead?.created_at);
+      const score = typeof lead.score === 'number' ? lead.score : null;
+      if (score != null) scores.push(score);
+
+      const created = parseDate(typeof lead.created_at === 'string' ? lead.created_at : undefined);
       if (created) {
         const ts = created.getTime();
         if (ts >= weekAgo) {
           newLeads7d += 1;
-          if (lead?.tier === 'A') newTierA7d += 1;
+          if (tier === 'A') newTierA7d += 1;
         } else if (ts >= prevWeekAgo && ts < weekAgo) {
           prevLeads7d += 1;
-          if (lead?.tier === 'A') prevTierA7d += 1;
-          if (typeof lead?.score === 'number') prevScores.push(lead.score);
+          if (tier === 'A') prevTierA7d += 1;
+          if (score != null) prevScores.push(score);
         }
       }
 
       const sources: string[] = [];
-      if (typeof lead?.source === 'string' && lead.source.trim()) sources.push(lead.source);
-      if (Array.isArray(lead?.sources)) {
+      if (typeof lead.source === 'string' && lead.source.trim()) sources.push(lead.source);
+      if (Array.isArray(lead.sources)) {
         for (const s of lead.sources) {
           if (typeof s === 'string' && s.trim()) sources.push(s);
         }
@@ -72,8 +88,8 @@ export async function GET() {
       for (const s of sources) {
         if (!sourceAgg[s]) sourceAgg[s] = { count: 0, tierA: 0, scores: [] };
         sourceAgg[s].count += 1;
-        if (lead?.tier === 'A') sourceAgg[s].tierA += 1;
-        if (typeof lead?.score === 'number') sourceAgg[s].scores.push(lead.score);
+        if (tier === 'A') sourceAgg[s].tierA += 1;
+        if (score != null) sourceAgg[s].scores.push(score);
       }
     }
 
@@ -85,10 +101,19 @@ export async function GET() {
     const prevAvgScore = prevScores.length > 0 ? prevScores.reduce((a, b) => a + b, 0) / prevScores.length : null;
 
     const countedStatuses = new Set([
-      'sent', 'bounced', 'replied', 'opened', 'clicked', 'interested', 'booked', 'qualified', 'unsubscribed', 'opt_out'
+      'sent',
+      'bounced',
+      'replied',
+      'opened',
+      'clicked',
+      'interested',
+      'booked',
+      'qualified',
+      'unsubscribed',
+      'opt_out',
     ]);
-    const sentTotal = sequences.filter((s) => countedStatuses.has(s?.status)).length;
-    const bounces = sequences.filter((s) => s?.status === 'bounced').length;
+    const sentTotal = sequences.filter((s) => typeof s.status === 'string' && countedStatuses.has(s.status)).length;
+    const bounces = sequences.filter((s) => s.status === 'bounced').length;
     const bounceRate = sentTotal > 0 ? bounces / sentTotal : 0;
 
     const source_quality = Object.entries(sourceAgg)

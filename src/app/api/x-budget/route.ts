@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { requireApiUser } from '@/lib/api-auth';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 
 export async function GET(request: Request) {
   const auth = requireApiUser(request as Request);
@@ -59,3 +60,4 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Failed to read budget' }, { status: 500 });
   }
 }
+

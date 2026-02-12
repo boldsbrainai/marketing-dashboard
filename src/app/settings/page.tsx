@@ -65,6 +65,11 @@ interface MeResponse {
   user?: { id: number; username: string; role: Role };
 }
 
+interface HermesInstance {
+  id: string;
+  label: string;
+}
+
 interface MemoryPolicy {
   decay_half_life_days: number;
   min_effective_confidence: number;
@@ -73,7 +78,7 @@ interface MemoryPolicy {
   default_ttl_days: number;
 }
 
-type PolicyNamespace = 'leads' | 'openclaw';
+type InstanceId = string;
 
 interface AlertPolicy {
   window_days: number;
@@ -84,7 +89,7 @@ interface AlertPolicy {
 }
 
 interface MemoryEffectPayload {
-  namespace: PolicyNamespace;
+  instance: string;
   available: boolean;
   reason?: string;
   history_points?: number;
@@ -103,6 +108,7 @@ interface MemoryEffectPayload {
 
 export default function SettingsPage() {
   const roleMatrix = getRoleMatrix();
+  const [instances, setInstances] = useState<HermesInstance[]>([]);
   const [syncInfo, setSyncInfo] = useState<SyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -118,46 +124,73 @@ export default function SettingsPage() {
   const [createSubmitting, setCreateSubmitting] = useState(false);
   const [passwordDrafts, setPasswordDrafts] = useState<Record<number, string>>({});
   const [requestRoleDrafts, setRequestRoleDrafts] = useState<Record<string, Role>>({});
-  const [policies, setPolicies] = useState<Record<PolicyNamespace, MemoryPolicy | null>>({
-    leads: null,
-    openclaw: null,
-  });
-  const [savingPolicy, setSavingPolicy] = useState<Record<PolicyNamespace, boolean>>({
-    leads: false,
-    openclaw: false,
-  });
-  const [alertPolicies, setAlertPolicies] = useState<Record<PolicyNamespace, AlertPolicy | null>>({
-    leads: null,
-    openclaw: null,
-  });
-  const [savingAlertPolicy, setSavingAlertPolicy] = useState<Record<PolicyNamespace, boolean>>({
-    leads: false,
-    openclaw: false,
-  });
-  const [memoryEffect, setMemoryEffect] = useState<MemoryEffectPayload | null>(null);
+  const [policies, setPolicies] = useState<Record<InstanceId, MemoryPolicy | null>>({});
+  const [savingPolicy, setSavingPolicy] = useState<Record<InstanceId, boolean>>({});
+  const [alertPolicies, setAlertPolicies] = useState<Record<InstanceId, AlertPolicy | null>>({});
+  const [savingAlertPolicy, setSavingAlertPolicy] = useState<Record<InstanceId, boolean>>({});
+  const [memoryEffects, setMemoryEffects] = useState<Record<InstanceId, MemoryEffectPayload | null>>({});
 
   useEffect(() => {
-    fetch('/api/settings').then(r => r.json()).then(setSyncInfo).catch(() => {});
-    fetch('/api/memory-policy?namespace=leads')
-      .then(r => r.json())
-      .then(res => setPolicies(prev => ({ ...prev, leads: res.policy })))
-      .catch(() => {});
-    fetch('/api/memory-policy?namespace=openclaw')
-      .then(r => r.json())
-      .then(res => setPolicies(prev => ({ ...prev, openclaw: res.policy })))
-      .catch(() => {});
-    fetch('/api/memory-alert-policy?namespace=leads')
-      .then(r => r.json())
-      .then(res => setAlertPolicies(prev => ({ ...prev, leads: res.policy })))
-      .catch(() => {});
-    fetch('/api/memory-alert-policy?namespace=openclaw')
-      .then(r => r.json())
-      .then(res => setAlertPolicies(prev => ({ ...prev, openclaw: res.policy })))
-      .catch(() => {});
-    fetch('/api/memory-effect?namespace=leads')
-      .then(r => r.json())
-      .then(setMemoryEffect)
-      .catch(() => {});
+    let alive = true;
+
+    (async () => {
+      fetch('/api/settings').then(r => r.json()).then(setSyncInfo).catch(() => {});
+
+      // Discover configured OpenClaw instances from the server so the dashboard
+      // can be used as a template across different deployments.
+      let discovered: HermesInstance[] = [];
+      try {
+        const res = await fetch('/api/instances', { cache: 'no-store' });
+        const data = await res.json();
+        discovered = Array.isArray(data.instances) ? data.instances : [];
+      } catch {
+        // Back-compat fallback for older deployments.
+        discovered = [
+          { id: 'leads', label: 'Leads' },
+          { id: 'openclaw', label: 'OpenClaw' },
+        ];
+      }
+
+      if (!alive) return;
+      setInstances(discovered);
+
+      const initPolicies: Record<string, MemoryPolicy | null> = {};
+      const initSaving: Record<string, boolean> = {};
+      const initAlert: Record<string, AlertPolicy | null> = {};
+      const initAlertSaving: Record<string, boolean> = {};
+      const initEffects: Record<string, MemoryEffectPayload | null> = {};
+      for (const it of discovered) {
+        initPolicies[it.id] = null;
+        initSaving[it.id] = false;
+        initAlert[it.id] = null;
+        initAlertSaving[it.id] = false;
+        initEffects[it.id] = null;
+      }
+      setPolicies(initPolicies);
+      setSavingPolicy(initSaving);
+      setAlertPolicies(initAlert);
+      setSavingAlertPolicy(initAlertSaving);
+      setMemoryEffects(initEffects);
+
+      await Promise.all(discovered.map(async (it) => {
+        try {
+          const p = await fetch(`/api/memory-policy?instance=${encodeURIComponent(it.id)}`, { cache: 'no-store' }).then(r => r.json());
+          if (alive) setPolicies(prev => ({ ...prev, [it.id]: p.policy ?? null }));
+        } catch {}
+        try {
+          const ap = await fetch(`/api/memory-alert-policy?instance=${encodeURIComponent(it.id)}`, { cache: 'no-store' }).then(r => r.json());
+          if (alive) setAlertPolicies(prev => ({ ...prev, [it.id]: ap.policy ?? null }));
+        } catch {}
+        try {
+          const eff = await fetch(`/api/memory-effect?instance=${encodeURIComponent(it.id)}`, { cache: 'no-store' }).then(r => r.json());
+          if (alive) setMemoryEffects(prev => ({ ...prev, [it.id]: eff ?? null }));
+        } catch {}
+      }));
+    })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -332,45 +365,45 @@ export default function SettingsPage() {
     }
   }
 
-  async function savePolicy(namespace: PolicyNamespace) {
-    const policy = policies[namespace];
+  async function savePolicy(instanceId: string) {
+    const policy = policies[instanceId];
     if (!policy) return;
-    setSavingPolicy(prev => ({ ...prev, [namespace]: true }));
+    setSavingPolicy(prev => ({ ...prev, [instanceId]: true }));
     try {
       const res = await fetch('/api/memory-policy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ namespace, ...policy }),
+        body: JSON.stringify({ instance: instanceId, ...policy }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save memory policy');
-      setPolicies(prev => ({ ...prev, [namespace]: data.policy }));
-      toast.success(`Decay policy saved (${namespace})`);
+      setPolicies(prev => ({ ...prev, [instanceId]: data.policy }));
+      toast.success(`Decay policy saved (${instanceId})`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
-      setSavingPolicy(prev => ({ ...prev, [namespace]: false }));
+      setSavingPolicy(prev => ({ ...prev, [instanceId]: false }));
     }
   }
 
-  async function saveAlertPolicy(namespace: PolicyNamespace) {
-    const policy = alertPolicies[namespace];
+  async function saveAlertPolicy(instanceId: string) {
+    const policy = alertPolicies[instanceId];
     if (!policy) return;
-    setSavingAlertPolicy(prev => ({ ...prev, [namespace]: true }));
+    setSavingAlertPolicy(prev => ({ ...prev, [instanceId]: true }));
     try {
       const res = await fetch('/api/memory-alert-policy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ namespace, ...policy }),
+        body: JSON.stringify({ instance: instanceId, ...policy }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save alert policy');
-      setAlertPolicies(prev => ({ ...prev, [namespace]: data.policy }));
-      toast.success(`Alert policy saved (${namespace})`);
+      setAlertPolicies(prev => ({ ...prev, [instanceId]: data.policy }));
+      toast.success(`Alert policy saved (${instanceId})`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
-      setSavingAlertPolicy(prev => ({ ...prev, [namespace]: false }));
+      setSavingAlertPolicy(prev => ({ ...prev, [instanceId]: false }));
     }
   }
 
@@ -473,13 +506,18 @@ export default function SettingsPage() {
           <BrainCircuit size={14} className="text-info" /> Memory Decay Policy
         </h2>
         <p className="text-xs text-muted-foreground">
-          Controls recency decay and prune thresholds for KB-manager per namespace.
+          Controls recency decay and prune thresholds for KB-manager per OpenClaw instance.
         </p>
-        {(['leads', 'openclaw'] as PolicyNamespace[]).map(ns => {
+        {instances.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Loading instances...</div>
+        ) : instances.map((it) => {
+          const ns = it.id;
           const policy = policies[ns];
           return (
             <div key={ns} className="rounded-lg border border-border/40 p-4 space-y-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{ns}</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {it.label} <span className="font-mono text-[10px] opacity-70">({ns})</span>
+              </div>
               {policy ? (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -724,11 +762,16 @@ export default function SettingsPage() {
         <p className="text-xs text-muted-foreground">
           Controls thresholds used by memory drift alerts (hourly + weekly jobs).
         </p>
-        {(['leads', 'openclaw'] as PolicyNamespace[]).map(ns => {
+        {instances.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Loading instances...</div>
+        ) : instances.map((it) => {
+          const ns = it.id;
           const policy = alertPolicies[ns];
           return (
             <div key={ns} className="rounded-lg border border-border/40 p-4 space-y-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{ns}</div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {it.label} <span className="font-mono text-[10px] opacity-70">({ns})</span>
+              </div>
               {policy ? (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
@@ -811,32 +854,48 @@ export default function SettingsPage() {
       {/* Policy Effect */}
       <div className="panel p-5 space-y-4">
         <h2 className="text-sm font-medium flex items-center gap-2">
-          <BrainCircuit size={14} className="text-primary" /> Policy Effect (Leads)
+          <BrainCircuit size={14} className="text-primary" /> Policy Effect
         </h2>
-        {!memoryEffect ? (
-          <div className="text-sm text-muted-foreground">Loading policy effect...</div>
-        ) : !memoryEffect.available || !memoryEffect.deltas ? (
-          <div className="text-xs text-muted-foreground">
-            Not enough history yet ({memoryEffect.history_points ?? 0} drift points, {memoryEffect.policy_changes ?? 0} policy changes).
-          </div>
+        {instances.length === 0 ? (
+          <div className="text-sm text-muted-foreground">Loading instances...</div>
         ) : (
-          <>
-            <div className="text-xs text-muted-foreground">
-              Baseline: {memoryEffect.baseline_at} · Current: {memoryEffect.current_at}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              <MetricDelta label="Contradictions" value={memoryEffect.deltas.contradictions} inverse />
-              <MetricDelta label="Duplicates" value={memoryEffect.deltas.duplicates} inverse />
-              <MetricDelta label="Weak Agents" value={memoryEffect.deltas.weak_agents} inverse />
-              <MetricDelta label="Hot Memory" value={memoryEffect.deltas.hot_memory} />
-              <MetricDelta
-                label="Never Accessed Ratio"
-                value={memoryEffect.deltas.never_accessed_ratio}
-                percent
-                inverse
-              />
-            </div>
-          </>
+          <div className="space-y-3">
+            {instances.map((it) => {
+              const memoryEffect = memoryEffects[it.id];
+              return (
+                <div key={it.id} className="rounded-lg border border-border/40 p-4 space-y-2">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {it.label} <span className="font-mono text-[10px] opacity-70">({it.id})</span>
+                  </div>
+                  {!memoryEffect ? (
+                    <div className="text-sm text-muted-foreground">Loading policy effect...</div>
+                  ) : !memoryEffect.available || !memoryEffect.deltas ? (
+                    <div className="text-xs text-muted-foreground">
+                      Not enough history yet ({memoryEffect.history_points ?? 0} drift points, {memoryEffect.policy_changes ?? 0} policy changes).
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-xs text-muted-foreground">
+                        Baseline: {memoryEffect.baseline_at} · Current: {memoryEffect.current_at}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <MetricDelta label="Contradictions" value={memoryEffect.deltas.contradictions} inverse />
+                        <MetricDelta label="Duplicates" value={memoryEffect.deltas.duplicates} inverse />
+                        <MetricDelta label="Weak Agents" value={memoryEffect.deltas.weak_agents} inverse />
+                        <MetricDelta label="Hot Memory" value={memoryEffect.deltas.hot_memory} />
+                        <MetricDelta
+                          label="Never Accessed Ratio"
+                          value={memoryEffect.deltas.never_accessed_ratio}
+                          percent
+                          inverse
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
       </>

@@ -3,13 +3,9 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { requireApiUser } from '@/lib/api-auth';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
 export const dynamic = 'force-dynamic';
-
-const LOCK_FILE = '/tmp/hermes-dashboard-deploy.lock';
-const LOG_DIR = '/home/leads/.openclaw/logs/deploy';
-const SCRIPT_PATH = '/home/leads/workspace/scripts/hermes-dashboard-deploy.sh';
-const SERVICE = 'hermes-dashboard.service';
 
 function safeExec(cmd: string[], fallback = ''): string {
   try {
@@ -19,11 +15,21 @@ function safeExec(cmd: string[], fallback = ''): string {
   }
 }
 
-function latestLog() {
-  if (!fs.existsSync(LOG_DIR)) return null;
-  const files = fs.readdirSync(LOG_DIR)
-    .filter(f => f.startsWith('hermes-dashboard-deploy-') && f.endsWith('.log'))
-    .map(f => path.join(LOG_DIR, f));
+function getInstanceId(request: Request): string | null {
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
+
+function latestLog(logDir: string) {
+  if (!fs.existsSync(logDir)) return null;
+  const files = fs
+    .readdirSync(logDir)
+    .filter((f) => f.includes('deploy') && f.endsWith('.log'))
+    .map((f) => path.join(logDir, f));
   if (files.length === 0) return null;
   files.sort((a, b) => {
     const as = fs.statSync(a).mtimeMs;
@@ -43,20 +49,34 @@ function latestLog() {
 export async function GET(request: Request) {
   const auth = requireApiUser(request as Request);
   if (auth) return auth;
+
+  const instance = getInstance(getInstanceId(request));
+  const { logsDir } = resolveOpenClawPaths(instance);
+
+  const lockFile =
+    process.env.HERMES_DEPLOY_LOCK_FILE?.trim() || '/tmp/hermes-dashboard-deploy.lock';
+  const logDir =
+    process.env.HERMES_DEPLOY_LOG_DIR?.trim() || path.join(logsDir, 'deploy');
+  const scriptPath = process.env.HERMES_DEPLOY_SCRIPT_PATH?.trim() || '';
+  const serviceName = process.env.HERMES_SERVICE_NAME?.trim() || 'hermes-dashboard.service';
+
   try {
-    const running = safeExec(['pgrep', '-af', 'hermes-dashboard-deploy.sh'], '');
-    const isActive = safeExec(['systemctl', 'is-active', SERVICE], 'unknown');
-    const log = latestLog();
-    const lockExists = fs.existsSync(LOCK_FILE);
+    const running = scriptPath
+      ? safeExec(['pgrep', '-af', path.basename(scriptPath)], '')
+      : safeExec(['pgrep', '-af', 'deploy'], '');
+    const isActive = safeExec(['systemctl', 'is-active', serviceName], 'unknown');
+    const log = latestLog(logDir);
+    const lockExists = fs.existsSync(lockFile);
 
     return NextResponse.json({
+      instance: instance.id,
       service: {
-        name: SERVICE,
+        name: serviceName,
         state: isActive,
       },
       deploy: {
-        script_path: SCRIPT_PATH,
-        lock_file: LOCK_FILE,
+        script_path: scriptPath || null,
+        lock_file: lockFile,
         lock_exists: lockExists,
         running_pids: running ? running.split('\n').filter(Boolean) : [],
       },
@@ -67,3 +87,4 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Failed to read deploy status' }, { status: 500 });
   }
 }
+

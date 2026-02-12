@@ -3,13 +3,12 @@ import { getDb } from '@/lib/db';
 import { getAgents, ACTION_TO_AGENT } from '@/lib/agent-config';
 import type { ApprovalItem, SkillExecution } from '@/types';
 import { requireApiUser } from '@/lib/api-auth';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 import fs from 'node:fs';
 import path from 'node:path';
 
 export const dynamic = 'force-dynamic';
 
-const CRON_JOBS_PATH = '/home/leads/.openclaw/cron/jobs.json';
-const CRON_RUNS_DIR = '/home/leads/.openclaw/cron/runs';
 const DECISION_WINDOW_DAYS = 7;
 
 type CronJob = {
@@ -24,9 +23,18 @@ type CronRun = {
   status?: string;
 };
 
-function readCronJobs(): CronJob[] {
+function getInstanceIdFromRequest(request: Request): string | null {
   try {
-    const raw = fs.readFileSync(CRON_JOBS_PATH, 'utf-8');
+    const url = new URL(request.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
+
+function readCronJobs(cronJobsPath: string): CronJob[] {
+  try {
+    const raw = fs.readFileSync(cronJobsPath, 'utf-8');
     const parsed = JSON.parse(raw) as { jobs?: CronJob[] };
     return Array.isArray(parsed.jobs) ? parsed.jobs : [];
   } catch {
@@ -40,8 +48,8 @@ function extractDecision(text: string): 'SCALE' | 'ITERATE' | 'KILL' | null {
   return m[1].toUpperCase() as 'SCALE' | 'ITERATE' | 'KILL';
 }
 
-function readRecentRuns(jobId: string): CronRun[] {
-  const file = path.join(CRON_RUNS_DIR, `${jobId}.jsonl`);
+function readRecentRuns(cronRunsDir: string, jobId: string): CronRun[] {
+  const file = path.join(cronRunsDir, `${jobId}.jsonl`);
   if (!fs.existsSync(file)) return [];
   try {
     const lines = fs.readFileSync(file, 'utf-8').split('\n').filter(Boolean);
@@ -59,8 +67,8 @@ function readRecentRuns(jobId: string): CronRun[] {
   }
 }
 
-function computeExperimentInsights() {
-  const jobs = readCronJobs();
+function computeExperimentInsights(cronJobsPath: string, cronRunsDir: string) {
+  const jobs = readCronJobs(cronJobsPath);
   const total = jobs.length;
   const withContract = jobs.filter((j) => (j.payload?.message || '').includes('EXPERIMENT_CONTRACT:'));
   const withoutContract = jobs.filter((j) => !(j.payload?.message || '').includes('EXPERIMENT_CONTRACT:'));
@@ -72,7 +80,7 @@ function computeExperimentInsights() {
   for (const job of withContract) {
     const jobId = job.id;
     if (!jobId) continue;
-    const runs = readRecentRuns(jobId);
+    const runs = readRecentRuns(cronRunsDir, jobId);
     for (const run of runs) {
       const tsNum = typeof run.ts === 'number' ? run.ts : Number(new Date(run.ts || '').getTime());
       if (!Number.isFinite(tsNum) || tsNum < cutoffMs) continue;
@@ -111,6 +119,10 @@ function computeExperimentInsights() {
 export async function GET(request: Request) {
   const auth = requireApiUser(request as Request);
   if (auth) return auth;
+  const instance = getInstance(getInstanceIdFromRequest(request));
+  const { cronDir } = resolveOpenClawPaths(instance);
+  const cronJobsPath = path.join(cronDir, 'jobs.json');
+  const cronRunsDir = path.join(cronDir, 'runs');
   const db = getDb();
 
   const pendingContent = db.prepare(
@@ -163,7 +175,7 @@ export async function GET(request: Request) {
       last_run: a.last_run,
     }));
 
-  const schedule = getAgents().flatMap((agent) =>
+  const schedule = getAgents(instance.id).flatMap((agent) =>
     agent.cronJobs.map(job => ({
       ...job,
       agent: agent.id,
@@ -184,9 +196,10 @@ export async function GET(request: Request) {
      GROUP BY hour ORDER BY hour`
   ).all(today) as { hour: number; c: number }[];
 
-  const experiment = computeExperimentInsights();
+  const experiment = computeExperimentInsights(cronJobsPath, cronRunsDir);
 
   return NextResponse.json({
+    instance: instance.id,
     approvals,
     skill_executions: skillExecutions,
     schedule,

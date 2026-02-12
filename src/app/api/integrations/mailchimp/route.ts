@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 
 const apiKey = process.env.NEXT_PUBLIC_MAILCHIMP_API_KEY;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function getDataCenter(key?: string) {
   if (!key) return null;
   const parts = key.split('-');
@@ -29,14 +33,23 @@ export async function GET() {
       return NextResponse.json({ enabled: true, ok: false, error: `Mailchimp HTTP ${res.status}` });
     }
 
-    const json = await res.json() as { lists?: any[]; total_items?: number };
-    const lists = (json.lists || []).map((list) => ({
-      id: list.id,
-      name: list.name,
-      members: list.stats?.member_count ?? 0,
-      unsubscribed: list.stats?.unsubscribe_count ?? 0,
-      cleaned: list.stats?.cleaned_count ?? 0,
-    }));
+    const json: unknown = await res.json();
+    const rawLists: unknown[] =
+      isRecord(json) && Array.isArray(json.lists) ? (json.lists as unknown[]) : [];
+
+    const lists = rawLists
+      .map((list) => {
+        if (!isRecord(list)) return null;
+        const stats = isRecord(list.stats) ? list.stats : null;
+        return {
+          id: typeof list.id === 'string' ? list.id : String(list.id ?? ''),
+          name: typeof list.name === 'string' ? list.name : '(unnamed)',
+          members: typeof stats?.member_count === 'number' ? stats.member_count : 0,
+          unsubscribed: typeof stats?.unsubscribe_count === 'number' ? stats.unsubscribe_count : 0,
+          cleaned: typeof stats?.cleaned_count === 'number' ? stats.cleaned_count : 0,
+        };
+      })
+      .filter((x): x is NonNullable<typeof x> => !!x && !!x.id);
 
     const totals = lists.reduce((acc, l) => {
       acc.members += l.members;

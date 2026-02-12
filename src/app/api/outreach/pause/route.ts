@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getUserFromRequest } from '@/lib/auth';
 import { getDb } from '@/lib/db';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const FLAG_PATH = path.join(STATE_DIR, 'sending-paused.flag');
 
 export async function POST(req: NextRequest) {
@@ -14,17 +15,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const body = await req.json().catch(() => ({})) as { paused?: boolean; reason?: string };
+    const body = (await req.json().catch(() => ({}))) as { paused?: boolean; reason?: string };
     if (typeof body.paused !== 'boolean') {
       return NextResponse.json({ error: 'Missing paused flag' }, { status: 400 });
     }
 
+    fs.mkdirSync(STATE_DIR, { recursive: true });
+
     if (body.paused) {
       const reason = (body.reason || 'Paused').trim();
       const stamp = new Date().toISOString();
-      fs.writeFileSync(FLAG_PATH, `${reason}
-${stamp}
-${user.username}`);
+      fs.writeFileSync(FLAG_PATH, `${reason}\n${stamp}\n${user.username}`);
     } else {
       if (fs.existsSync(FLAG_PATH)) {
         fs.unlinkSync(FLAG_PATH);
@@ -43,3 +44,4 @@ ${user.username}`);
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
+

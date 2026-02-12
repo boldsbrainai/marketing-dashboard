@@ -1,31 +1,19 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
 import { requireApiUser } from '@/lib/api-auth';
 import { requireUser } from '@/lib/auth';
+import { allowPolicyWrite, getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
 export const dynamic = 'force-dynamic';
 
-type Namespace = 'leads' | 'openclaw';
-
-type AlertPolicy = {
+interface AlertPolicy {
   window_days: number;
   alert_contradictions_threshold: number;
   alert_duplicates_threshold: number;
   alert_weak_agents_threshold: number;
   alert_never_ratio_threshold: number;
-};
-
-const POLICY_FILES: Record<Namespace, string> = {
-  leads: '/home/leads/.openclaw/health/memory-alert-policy.json',
-  openclaw: '/home/openclaw/.openclaw/health/memory-alert-policy.json',
-};
-
-const POLICY_AUDIT_FILES: Record<Namespace, string> = {
-  leads: '/home/leads/.openclaw/logs/memory-alert-policy-audit.jsonl',
-  openclaw: '/home/openclaw/.openclaw/logs/memory-alert-policy-audit.jsonl',
-};
+}
 
 const DEFAULT_POLICY: AlertPolicy = {
   window_days: 7,
@@ -37,10 +25,6 @@ const DEFAULT_POLICY: AlertPolicy = {
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
-}
-
-function parseNamespace(value: string | null | undefined): Namespace {
-  return value === 'openclaw' ? 'openclaw' : 'leads';
 }
 
 function sanitize(input: Partial<AlertPolicy>): AlertPolicy {
@@ -69,9 +53,27 @@ function sanitize(input: Partial<AlertPolicy>): AlertPolicy {
   };
 }
 
-function readPolicy(namespace: Namespace): AlertPolicy {
+function getInstanceId(request: Request): string | null {
   try {
-    const policyFile = POLICY_FILES[namespace];
+    const url = new URL(request.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
+
+function policyPaths(instanceId: string | null) {
+  const instance = getInstance(instanceId);
+  const { healthDir, logsDir } = resolveOpenClawPaths(instance);
+  return {
+    instance,
+    policyFile: path.join(healthDir, 'memory-alert-policy.json'),
+    auditFile: path.join(logsDir, 'memory-alert-policy-audit.jsonl'),
+  };
+}
+
+function readPolicy(policyFile: string): AlertPolicy {
+  try {
     if (!fs.existsSync(policyFile)) return DEFAULT_POLICY;
     const raw = fs.readFileSync(policyFile, 'utf-8');
     const parsed = JSON.parse(raw) as Partial<AlertPolicy>;
@@ -81,82 +83,22 @@ function readPolicy(namespace: Namespace): AlertPolicy {
   }
 }
 
-function writePolicy(namespace: Namespace, policy: AlertPolicy): void {
-  const policyFile = POLICY_FILES[namespace];
+function writePolicy(policyFile: string, policy: AlertPolicy): void {
   fs.mkdirSync(path.dirname(policyFile), { recursive: true });
   fs.writeFileSync(policyFile, JSON.stringify(policy, null, 2) + '\n', 'utf-8');
 }
 
-function appendPolicyAudit(namespace: Namespace, payload: Record<string, unknown>): void {
-  const auditFile = POLICY_AUDIT_FILES[namespace];
+function appendAudit(auditFile: string, payload: Record<string, unknown>): void {
   fs.mkdirSync(path.dirname(auditFile), { recursive: true });
   fs.appendFileSync(auditFile, `${JSON.stringify(payload)}\n`, 'utf-8');
 }
 
-function crontabList(namespace: Namespace): string {
-  if (namespace === 'leads') {
-    return execFileSync('crontab', ['-l'], { encoding: 'utf-8' });
-  }
-  return execFileSync('sudo', ['-n', 'crontab', '-u', 'openclaw', '-l'], { encoding: 'utf-8' });
-}
-
-function crontabWrite(namespace: Namespace, filePath: string): void {
-  if (namespace === 'leads') {
-    execFileSync('crontab', [filePath], { encoding: 'utf-8' });
-    return;
-  }
-  execFileSync('sudo', ['-n', 'crontab', '-u', 'openclaw', filePath], { encoding: 'utf-8' });
-}
-
-function rewriteDriftCron(namespace: Namespace, policy: AlertPolicy): { updated: number } {
-  const current = crontabList(namespace);
-  const lines = current.split('\n');
-  const targetNsArg = `--namespace ${namespace}`;
-  let updated = 0;
-
-  const next = lines.map(line => {
-    if (!line.includes('memory-drift-report.py') || !line.includes(targetNsArg)) return line;
-    let rewritten = line
-      .replace(/\s--window-days\s+\S+/g, '')
-      .replace(/\s--alert-contradictions-threshold\s+\S+/g, '')
-      .replace(/\s--alert-duplicates-threshold\s+\S+/g, '')
-      .replace(/\s--alert-weak-agents-threshold\s+\S+/g, '')
-      .replace(/\s--alert-never-ratio-threshold\s+\S+/g, '');
-
-    const opts =
-      ` --window-days ${policy.window_days}` +
-      ` --alert-contradictions-threshold ${policy.alert_contradictions_threshold}` +
-      ` --alert-duplicates-threshold ${policy.alert_duplicates_threshold}` +
-      ` --alert-weak-agents-threshold ${policy.alert_weak_agents_threshold}` +
-      ` --alert-never-ratio-threshold ${policy.alert_never_ratio_threshold}`;
-
-    const redirectIdx = rewritten.indexOf(' >> ');
-    if (redirectIdx >= 0) {
-      rewritten = `${rewritten.slice(0, redirectIdx)}${opts}${rewritten.slice(redirectIdx)}`;
-    } else {
-      rewritten = `${rewritten}${opts}`;
-    }
-    updated += 1;
-    return rewritten;
-  });
-
-  if (updated > 0) {
-    const tmp = namespace === 'openclaw'
-      ? '/tmp/hermes-openclaw-cron.txt'
-      : '/tmp/hermes-leads-cron.txt';
-    fs.writeFileSync(tmp, next.join('\n'), 'utf-8');
-    crontabWrite(namespace, tmp);
-  }
-  return { updated };
-}
-
 export async function GET(request: Request) {
-  const auth = requireApiUser(request as Request);
+  const auth = requireApiUser(request);
   if (auth) return auth;
   try {
-    const url = new URL(request.url);
-    const namespace = parseNamespace(url.searchParams.get('namespace'));
-    return NextResponse.json({ namespace, policy: readPolicy(namespace) });
+    const { instance, policyFile } = policyPaths(getInstanceId(request));
+    return NextResponse.json({ instance: instance.id, policy: readPolicy(policyFile) });
   } catch (error) {
     console.error('GET /api/memory-alert-policy error:', error);
     return NextResponse.json({ error: 'Failed to read memory alert policy' }, { status: 500 });
@@ -164,36 +106,35 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const auth = requireApiUser(request as Request);
+  const auth = requireApiUser(request);
   if (auth) return auth;
-  let namespace: Namespace = 'leads';
+  if (!allowPolicyWrite()) {
+    return NextResponse.json(
+      { error: 'Policy write disabled (set HERMES_ALLOW_POLICY_WRITE=true to enable)' },
+      { status: 403 },
+    );
+  }
+
   try {
-    const actor = requireUser(request as Request);
-    const body = (await request.json()) as Partial<AlertPolicy> & { namespace?: Namespace };
-    namespace = parseNamespace(body.namespace);
-    const before = readPolicy(namespace);
+    const actor = requireUser(request);
+    const body = (await request.json()) as Partial<AlertPolicy> & { instance?: string; namespace?: string };
+    const instanceId = body.instance ?? body.namespace ?? getInstanceId(request) ?? undefined;
+    const { instance, policyFile, auditFile } = policyPaths(instanceId ?? null);
+    const before = readPolicy(policyFile);
     const policy = sanitize(body);
-    writePolicy(namespace, policy);
-    const cron = rewriteDriftCron(namespace, policy);
-    appendPolicyAudit(namespace, {
+    writePolicy(policyFile, policy);
+    appendAudit(auditFile, {
       timestamp: new Date().toISOString(),
       actor: actor.username,
       actor_role: actor.role,
-      namespace,
+      instance: instance.id,
       before,
       after: policy,
-      drift_cron_lines_updated: cron.updated,
     });
-    return NextResponse.json({ ok: true, namespace, policy, cron });
+    return NextResponse.json({ ok: true, instance: instance.id, policy });
   } catch (error) {
     console.error('POST /api/memory-alert-policy error:', error);
-    const message = error instanceof Error ? error.message : String(error);
-    if (namespace === 'openclaw' && /password is required|sudo/i.test(message)) {
-      return NextResponse.json(
-        { error: 'openclaw alert policy update requires sudo permission for leads service user' },
-        { status: 403 },
-      );
-    }
     return NextResponse.json({ error: 'Failed to update memory alert policy' }, { status: 500 });
   }
 }
+

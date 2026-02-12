@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server';
 
 const heliusUrl = process.env.NEXT_PUBLIC_HELIUS_URL;
 
-async function rpc(method: string, params: any[] = []) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function rpc(method: string, params: unknown[] = []): Promise<unknown> {
   if (!heliusUrl) return null;
   const res = await fetch(heliusUrl, {
     method: 'POST',
@@ -24,11 +28,14 @@ export async function GET() {
       rpc('getSlot'),
     ]);
 
+    const healthResult = isRecord(health) ? health.result : null;
+    const slotResult = isRecord(slot) ? slot.result : null;
+
     return NextResponse.json({
       enabled: true,
-      ok: (health?.result === 'ok'),
-      health: health?.result ?? null,
-      slot: slot?.result ?? null,
+      ok: healthResult === 'ok',
+      health: healthResult ?? null,
+      slot: slotResult ?? null,
       checked_at: new Date().toISOString(),
     });
   } catch (error) {

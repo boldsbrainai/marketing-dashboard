@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const LEADS_PATH = path.join(STATE_DIR, 'leads.json');
+
+type LeadStateRow = {
+  created_at?: unknown;
+  source?: unknown;
+  sources?: unknown;
+};
 
 function readJson<T>(filePath: string, fallback: T): T {
   try {
@@ -20,7 +27,7 @@ function dateKey(d: Date) {
 
 export async function GET() {
   try {
-    const leads = readJson<any[]>(LEADS_PATH, []);
+    const leads = readJson<LeadStateRow[]>(LEADS_PATH, []);
     const now = new Date();
     const days = 30;
     const start = new Date(now);
@@ -30,13 +37,14 @@ export async function GET() {
     const rows: { date: string; sources: string[] }[] = [];
 
     for (const lead of leads) {
-      const createdAt = lead?.created_at ? new Date(lead.created_at) : null;
+      const createdAt =
+        typeof lead.created_at === 'string' ? new Date(lead.created_at) : null;
       if (!createdAt || Number.isNaN(createdAt.getTime())) continue;
       if (createdAt < start) continue;
       const date = dateKey(createdAt);
       const sources: string[] = [];
-      if (typeof lead?.source === 'string' && lead.source.trim()) sources.push(lead.source);
-      if (Array.isArray(lead?.sources)) {
+      if (typeof lead.source === 'string' && lead.source.trim()) sources.push(lead.source);
+      if (Array.isArray(lead.sources)) {
         for (const s of lead.sources) {
           if (typeof s === 'string' && s.trim()) sources.push(s);
         }

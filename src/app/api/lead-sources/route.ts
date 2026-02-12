@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const LEADS_PATH = path.join(STATE_DIR, 'leads.json');
+
+type LeadStateRow = {
+  source?: unknown;
+  sources?: unknown;
+};
 
 function readJson<T>(filePath: string, fallback: T): T {
   try {
@@ -16,15 +22,15 @@ function readJson<T>(filePath: string, fallback: T): T {
 
 export async function GET() {
   try {
-    const leads = readJson<any[]>(LEADS_PATH, []);
+    const leads = readJson<LeadStateRow[]>(LEADS_PATH, []);
     const counts: Record<string, number> = {};
 
     for (const lead of leads) {
-      const source = lead?.source;
+      const source = lead.source;
       if (typeof source === 'string' && source.trim()) {
         counts[source] = (counts[source] || 0) + 1;
       }
-      const sources = Array.isArray(lead?.sources) ? lead.sources : [];
+      const sources = Array.isArray(lead.sources) ? lead.sources : [];
       for (const s of sources) {
         if (typeof s === 'string' && s.trim()) {
           counts[s] = (counts[s] || 0) + 1;

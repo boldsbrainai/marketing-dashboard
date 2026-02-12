@@ -1,17 +1,26 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { getSeedCount } from '@/lib/queries';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { requireApiUser } from '@/lib/api-auth';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
 const DB_PATH = process.env.HERMES_DB_PATH || path.join(process.cwd(), 'hermes.db');
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 
 const TABLE_NAMES = [
-  'content_posts', 'leads', 'sequences', 'suppression',
-  'engagements', 'signals', 'experiments', 'learnings',
-  'daily_metrics', 'activity_log', 'notifications',
+  'content_posts',
+  'leads',
+  'sequences',
+  'suppression',
+  'engagements',
+  'signals',
+  'experiments',
+  'learnings',
+  'daily_metrics',
+  'activity_log',
+  'notifications',
 ];
 
 export async function GET(request: Request) {
@@ -30,7 +39,7 @@ export async function GET(request: Request) {
     }
 
     // Get row counts for each table
-    const tables = TABLE_NAMES.map(name => {
+    const tables = TABLE_NAMES.map((name) => {
       try {
         const row = db.prepare(`SELECT COUNT(*) as c FROM ${name}`).get() as { c: number };
         return { name, count: row?.c ?? 0 };
@@ -53,3 +62,4 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Failed to get settings' }, { status: 500 });
   }
 }
+

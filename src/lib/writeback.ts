@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+import { getHermesStateDir } from '@/lib/hermes-state';
+
+const STATE_DIR = getHermesStateDir();
 
 /**
  * Write a status change back to a JSON state file so the Hermes agent picks it up.

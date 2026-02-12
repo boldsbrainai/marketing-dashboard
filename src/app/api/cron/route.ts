@@ -4,19 +4,31 @@ import { promises as fs } from 'node:fs';
 import fsSync from 'node:fs';
 import path from 'node:path';
 import { requireApiUser } from '@/lib/api-auth';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
-const CRON_DIR = '/home/leads/.openclaw/cron';
-const LOGS_DIR = '/home/leads/.openclaw/cron/logs';
+export const dynamic = 'force-dynamic';
+
+function getInstanceId(request: Request): string | null {
+  try {
+    const url = new URL(request.url);
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
 
 /**
  * POST /api/cron — Check for completed cron jobs and create notifications
  */
 export async function POST(request: Request) {
-  const auth = requireApiUser(request as Request);
+  const auth = requireApiUser(request);
   if (auth) return auth;
   try {
+    const instance = getInstance(getInstanceId(request));
+    const { cronDir } = resolveOpenClawPaths(instance);
+
     const db = getDb();
-    const jobsPath = path.join(CRON_DIR, 'jobs.json');
+    const jobsPath = path.join(cronDir, 'jobs.json');
     if (!fsSync.existsSync(jobsPath)) {
       return NextResponse.json({ notified: 0 });
     }
@@ -29,14 +41,16 @@ export async function POST(request: Request) {
       if (!job.state?.lastRunAtMs) continue;
 
       // Check if we already notified for this run
-      const key = `cron:${job.id}:${job.state.lastRunAtMs}`;
-      const existing = db.prepare(
-        "SELECT 1 FROM notifications WHERE data LIKE ? LIMIT 1"
-      ).get(`%${key}%`);
+      const key = `cron:${instance.id}:${job.id}:${job.state.lastRunAtMs}`;
+      const existing = db
+        .prepare('SELECT 1 FROM notifications WHERE data LIKE ? LIMIT 1')
+        .get(`%${key}%`);
 
       if (!existing) {
         const status = job.state.lastStatus === 'ok' ? 'info' : 'warning';
-        const duration = job.state.lastDurationMs ? `${Math.round(job.state.lastDurationMs / 1000)}s` : '';
+        const duration = job.state.lastDurationMs
+          ? `${Math.round(job.state.lastDurationMs / 1000)}s`
+          : '';
         const agentLabel = (job.agentId || 'unknown').charAt(0).toUpperCase() + (job.agentId || 'unknown').slice(1);
 
         db.prepare(`
@@ -58,9 +72,6 @@ export async function POST(request: Request) {
   }
 }
 
-export const dynamic = 'force-dynamic';
-
-
 interface CronJob {
   id: string;
   agent: string;
@@ -75,11 +86,15 @@ interface CronJob {
 }
 
 export async function GET(request: Request) {
-  const auth = requireApiUser(request as Request);
+  const auth = requireApiUser(request);
   if (auth) return auth;
   try {
+    const instance = getInstance(getInstanceId(request));
+    const { cronDir } = resolveOpenClawPaths(instance);
+    const logsDir = path.join(cronDir, 'logs');
+
     // Read cron jobs config
-    const jobsPath = path.join(CRON_DIR, 'jobs.json');
+    const jobsPath = path.join(cronDir, 'jobs.json');
     let jobs: CronJob[] = [];
     try {
       const raw = await fs.readFile(jobsPath, 'utf-8');
@@ -90,35 +105,37 @@ export async function GET(request: Request) {
     }
 
     // Read recent logs for each job
-    const enriched = await Promise.all(jobs.map(async (job) => {
-      try {
-        const logFile = path.join(LOGS_DIR, `${job.id}.log`);
-        const stat = await fs.stat(logFile).catch(() => null);
-        if (!stat) return { ...job, lastRun: null, lastResult: null };
+    const enriched = await Promise.all(
+      jobs.map(async (job) => {
+        try {
+          const logFile = path.join(logsDir, `${job.id}.log`);
+          const stat = await fs.stat(logFile).catch(() => null);
+          if (!stat) return { ...job, lastRun: null, lastResult: null };
 
-        // Read last 2KB of log
-        const fd = await fs.open(logFile, 'r');
-        const size = stat.size;
-        const readSize = Math.min(size, 2048);
-        const buffer = Buffer.alloc(readSize);
-        await fd.read(buffer, 0, readSize, Math.max(0, size - readSize));
-        await fd.close();
+          // Read last 2KB of log
+          const fd = await fs.open(logFile, 'r');
+          const size = stat.size;
+          const readSize = Math.min(size, 2048);
+          const buffer = Buffer.alloc(readSize);
+          await fd.read(buffer, 0, readSize, Math.max(0, size - readSize));
+          await fd.close();
 
-        const lastLines = buffer.toString('utf-8').trim().split('\n').slice(-5);
-        return {
-          ...job,
-          lastRun: stat.mtime.toISOString(),
-          lastResult: lastLines.join('\n'),
-        };
-      } catch {
-        return { ...job, lastRun: null, lastResult: null };
-      }
-    }));
+          const lastLines = buffer.toString('utf-8').trim().split('\n').slice(-5);
+          return {
+            ...job,
+            lastRun: stat.mtime.toISOString(),
+            lastResult: lastLines.join('\n'),
+          };
+        } catch {
+          return { ...job, lastRun: null, lastResult: null };
+        }
+      }),
+    );
 
-    // Calculate next run (simple: just show schedule info)
-    return NextResponse.json({ jobs: enriched });
+    return NextResponse.json({ instance: instance.id, jobs: enriched });
   } catch (error) {
     console.error('GET /api/cron error:', error);
     return NextResponse.json({ error: 'Failed to read cron status' }, { status: 500 });
   }
 }
+

@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const LEADS_ADMIN = '/home/openclaw/bin/leads-admin';
+const ADMIN_CLI = process.env.HERMES_ADMIN_CLI || process.env.OPENCLAW_BIN || 'openclaw';
 
 interface CommandResult {
   stdout: string;
@@ -17,7 +17,7 @@ export function runLeadsAdmin(
   opts: { timeoutMs?: number } = {},
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(LEADS_ADMIN, args, { shell: false });
+    const child = spawn(ADMIN_CLI, args, { shell: false });
 
     let stdout = '';
     let stderr = '';

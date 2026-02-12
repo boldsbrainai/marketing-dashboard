@@ -1,29 +1,14 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
+import path from 'path';
 import { requireApiUser } from '@/lib/api-auth';
+import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
 export const dynamic = 'force-dynamic';
 
-type Namespace = 'leads' | 'openclaw';
-
-const DRIFT_HISTORY: Record<Namespace, string> = {
-  leads: '/home/leads/.openclaw/logs/memory-drift-history.jsonl',
-  openclaw: '/home/openclaw/.openclaw/logs/memory-drift-history.jsonl',
-};
-
-const POLICY_AUDIT: Record<Namespace, string> = {
-  leads: '/home/leads/.openclaw/logs/memory-policy-audit.jsonl',
-  openclaw: '/home/openclaw/.openclaw/logs/memory-policy-audit.jsonl',
-};
-
-const ALERT_POLICY_AUDIT: Record<Namespace, string> = {
-  leads: '/home/leads/.openclaw/logs/memory-alert-policy-audit.jsonl',
-  openclaw: '/home/openclaw/.openclaw/logs/memory-alert-policy-audit.jsonl',
-};
-
 type DriftRow = {
   timestamp: string;
-  namespace: string;
+  namespace?: string;
   contradictions: number;
   duplicates: number;
   weak_agents: number;
@@ -33,14 +18,19 @@ type DriftRow = {
   collective_total: number;
 };
 
-function parseNamespace(value: string | null | undefined): Namespace {
-  return value === 'openclaw' ? 'openclaw' : 'leads';
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readJsonl(filePath: string): any[] {
+type AuditRow = { timestamp: string } & Record<string, unknown>;
+function isAuditRow(value: unknown): value is AuditRow {
+  return isRecord(value) && typeof value.timestamp === 'string';
+}
+
+function readJsonl(filePath: string): unknown[] {
   if (!fs.existsSync(filePath)) return [];
   const raw = fs.readFileSync(filePath, 'utf-8');
-  const out: any[] = [];
+  const out: unknown[] = [];
   for (const line of raw.split('\n')) {
     const s = line.trim();
     if (!s) continue;
@@ -62,23 +52,37 @@ function metricDelta(before: number, after: number): { before: number; after: nu
   return { before, after, delta: after - before };
 }
 
-export async function GET(request: Request) {
-  const auth = requireApiUser(request as Request);
-  if (auth) return auth;
+function getInstanceId(request: Request): string | null {
   try {
     const url = new URL(request.url);
-    const namespace = parseNamespace(url.searchParams.get('namespace'));
+    return url.searchParams.get('instance') || url.searchParams.get('namespace');
+  } catch {
+    return null;
+  }
+}
 
-    const history = readJsonl(DRIFT_HISTORY[namespace]) as DriftRow[];
-    const policyAudit = readJsonl(POLICY_AUDIT[namespace]);
-    const alertPolicyAudit = readJsonl(ALERT_POLICY_AUDIT[namespace]);
+export async function GET(request: Request) {
+  const auth = requireApiUser(request);
+  if (auth) return auth;
+  try {
+    const instance = getInstance(getInstanceId(request));
+    const { logsDir } = resolveOpenClawPaths(instance);
+
+    const historyPath = path.join(logsDir, 'memory-drift-history.jsonl');
+    const policyAuditPath = path.join(logsDir, 'memory-policy-audit.jsonl');
+    const alertPolicyAuditPath = path.join(logsDir, 'memory-alert-policy-audit.jsonl');
+
+    const history = readJsonl(historyPath) as DriftRow[];
+    const policyAudit = readJsonl(policyAuditPath);
+    const alertPolicyAudit = readJsonl(alertPolicyAuditPath);
     const changes = [...policyAudit, ...alertPolicyAudit]
-      .filter(x => typeof x?.timestamp === 'string')
+      .filter(isAuditRow)
       .sort((a, b) => tsMs(b.timestamp) - tsMs(a.timestamp));
 
     if (history.length < 2 || changes.length === 0) {
       return NextResponse.json({
-        namespace,
+        instance: instance.id,
+        namespace: instance.id, // back-compat for older UI
         available: false,
         reason: 'insufficient_history_or_policy_changes',
         history_points: history.length,
@@ -89,7 +93,9 @@ export async function GET(request: Request) {
     const sortedHistory = [...history].sort((a, b) => tsMs(a.timestamp) - tsMs(b.timestamp));
     const latestChange = changes[0];
     const changeMs = tsMs(latestChange.timestamp);
-    const before = [...sortedHistory].reverse().find(h => tsMs(h.timestamp) <= changeMs) ?? sortedHistory[sortedHistory.length - 2];
+    const before =
+      [...sortedHistory].reverse().find((h) => tsMs(h.timestamp) <= changeMs) ??
+      sortedHistory[sortedHistory.length - 2];
     const after = sortedHistory[sortedHistory.length - 1];
 
     const beforeTotal = Math.max(1, Number(before.collective_total || 0));
@@ -98,7 +104,8 @@ export async function GET(request: Request) {
     const afterNeverRatio = Number(after.never_accessed || 0) / afterTotal;
 
     return NextResponse.json({
-      namespace,
+      instance: instance.id,
+      namespace: instance.id,
       available: true,
       latest_policy_change: latestChange.timestamp,
       baseline_at: before.timestamp,

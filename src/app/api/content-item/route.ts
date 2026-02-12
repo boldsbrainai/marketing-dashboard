@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getDb } from '@/lib/db';
+import { getHermesStateDir } from '@/lib/hermes-state';
 
 export const dynamic = 'force-dynamic';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || '/home/leads/workspace/state';
+const STATE_DIR = getHermesStateDir();
 const QUEUE_FILE = path.join(STATE_DIR, 'content-queue.json');
 
 type QueueItem = Record<string, unknown> & { id?: string };
@@ -19,6 +20,7 @@ function readQueueFile(): QueueItem[] {
 }
 
 function writeQueueFile(items: QueueItem[]) {
+  fs.mkdirSync(path.dirname(QUEUE_FILE), { recursive: true });
   fs.writeFileSync(QUEUE_FILE, JSON.stringify(items, null, 2), 'utf-8');
 }
 
@@ -205,3 +207,4 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
+
