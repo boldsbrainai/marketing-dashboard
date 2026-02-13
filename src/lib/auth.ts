@@ -394,11 +394,13 @@ export function reviewGoogleLoginRequest(email: string, action: 'approve' | 'den
     db.transaction(() => {
       db.prepare(
         `INSERT INTO google_login_requests
-          (email, status, requested_role, attempts, last_attempt_at, created_at, updated_at, reviewed_at)
-         VALUES (?, 'approved', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          (email, status, requested_role, attempts, last_error, last_attempt_at, created_at, updated_at, reviewed_at)
+         VALUES (?, 'approved', ?, 0, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
          ON CONFLICT(email) DO UPDATE SET
           status = 'approved',
           requested_role = excluded.requested_role,
+          attempts = 0,
+          last_error = NULL,
           updated_at = CURRENT_TIMESTAMP,
           reviewed_at = CURRENT_TIMESTAMP`,
       ).run(normalizedEmail, approvedRole);
@@ -409,10 +411,12 @@ export function reviewGoogleLoginRequest(email: string, action: 'approve' | 'den
 
   db.prepare(
     `INSERT INTO google_login_requests
-      (email, status, requested_role, attempts, last_attempt_at, created_at, updated_at, reviewed_at)
-     VALUES (?, 'denied', ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      (email, status, requested_role, attempts, last_error, last_attempt_at, created_at, updated_at, reviewed_at)
+     VALUES (?, 'denied', ?, 0, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
      ON CONFLICT(email) DO UPDATE SET
       status = 'denied',
+      attempts = 0,
+      last_error = NULL,
       updated_at = CURRENT_TIMESTAMP,
       reviewed_at = CURRENT_TIMESTAMP`,
   ).run(normalizedEmail, normalizeRoleValue(role, 'viewer'));

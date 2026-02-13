@@ -43,8 +43,15 @@ pnpm dev
 ## Scripts
 
 - `pnpm dev`
-- `pnpm build`
-- `pnpm start`
 - `pnpm lint`
-- `pnpm seed`
 - `pnpm test`
+- `pnpm build`
+- `pnpm prepare:standalone` (copies static assets into `.next/standalone`)
+- `pnpm build:standalone` (build + prepare standalone; fixes missing CSS after rebuilds)
+- `pnpm start`
+- `pnpm seed`
+
+## Template Hygiene
+
+- Run `./scripts/template-audit.sh` before sharing or templating.
+- Use `./scripts/template-export.sh [output_dir]` to produce a clean copy (excludes `.env*`, `*.db*`, `state`, `.next`, `node_modules`).

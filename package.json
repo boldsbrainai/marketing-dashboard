@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
-    "test": "node --import tsx --test src/lib/auth.test.ts"
+    "test": "node --import tsx --test src/lib/auth.test.ts",
+    "prepare:standalone": "bash scripts/prepare-standalone.sh",
+    "build:standalone": "pnpm build && pnpm run prepare:standalone",
+    "postbuild": "pnpm run prepare:standalone"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

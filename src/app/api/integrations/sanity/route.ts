@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { requireApiUser } from '@/lib/api-auth';
 
-// Server-only env vars (preferred). Keep NEXT_PUBLIC_* as back-compat fallback.
-const projectId = process.env.SANITY_PROJECT_ID || process.env.NEXT_PUBLIC_SANITY_PROJECT_ID;
-const dataset = process.env.SANITY_DATASET || process.env.NEXT_PUBLIC_SANITY_DATASET;
-const apiVersion = process.env.SANITY_API_VERSION || process.env.NEXT_PUBLIC_SANITY_API_VERSION || '2022-11-15';
+// Server-only env vars (do not use NEXT_PUBLIC_* for secrets).
+const projectId = process.env.SANITY_PROJECT_ID;
+const dataset = process.env.SANITY_DATASET;
+const apiVersion = process.env.SANITY_API_VERSION || '2022-11-15';
 const token = process.env.SANITY_API_TOKEN;
 
 const TYPES = ['post', 'article', 'blogPost', 'blog', 'content', 'page'];

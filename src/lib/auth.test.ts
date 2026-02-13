@@ -19,7 +19,10 @@ import {
   destroySession,
   ensureAuthTables,
   getUserFromRequest,
+  listGoogleLoginRequests,
+  recordGoogleLoginAttempt,
   requireUser,
+  reviewGoogleLoginRequest,
   seedAdmin,
   validateSession,
 } from './auth';
@@ -94,4 +97,29 @@ test('x-api-key auth only works when API_KEY is configured and matches', () => {
   delete process.env.API_KEY;
   assert.equal(getUserFromRequest(request), null);
   process.env.API_KEY = previous;
+});
+
+test('reviewing login requests clears stale pending error metadata', () => {
+  recordGoogleLoginAttempt('ruben@builderz.dev', 'sub-123', 'Google account is not allowed; request pending admin approval');
+
+  let rows = listGoogleLoginRequests();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'pending');
+  assert.equal(rows[0].attempts, 1);
+  assert.match(rows[0].last_error ?? '', /pending admin approval/);
+
+  reviewGoogleLoginRequest('ruben@builderz.dev', 'approve', 'admin');
+  rows = listGoogleLoginRequests();
+
+  assert.equal(rows[0].status, 'approved');
+  assert.equal(rows[0].requested_role, 'admin');
+  assert.equal(rows[0].attempts, 0);
+  assert.equal(rows[0].last_error, null);
+
+  reviewGoogleLoginRequest('ruben@builderz.dev', 'deny', 'viewer');
+  rows = listGoogleLoginRequests();
+
+  assert.equal(rows[0].status, 'denied');
+  assert.equal(rows[0].attempts, 0);
+  assert.equal(rows[0].last_error, null);
 });

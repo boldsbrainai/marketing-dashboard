@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { requireApiUser } from '@/lib/api-auth';
 
-// Server-only env var (preferred). Keep NEXT_PUBLIC_* as back-compat fallback.
-const apiKey = process.env.MAILCHIMP_API_KEY || process.env.NEXT_PUBLIC_MAILCHIMP_API_KEY;
+// Server-only env var (do not use NEXT_PUBLIC_* for secrets).
+const apiKey = process.env.MAILCHIMP_API_KEY;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

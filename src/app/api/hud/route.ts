@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { getDb } from '@/lib/db';
+import { getHermesStateDir } from '@/lib/hermes-state';
 import { requireApiUser } from '@/lib/api-auth';
 import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
 
 export const dynamic = 'force-dynamic';
 
-const STATE_DIR = process.env.HERMES_STATE_DIR || path.join(process.cwd(), 'state');
+const STATE_DIR = getHermesStateDir();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

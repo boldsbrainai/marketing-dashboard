@@ -934,7 +934,7 @@ export default function SettingsPage() {
                           <div className="text-xs text-muted-foreground">
                             status: {req.status} • attempts: {req.attempts}
                           </div>
-                          {req.last_error ? (
+                          {req.status === 'pending' && req.last_error ? (
                             <div className="text-xs text-warning truncate">last error: {req.last_error}</div>
                           ) : null}
                         </div>

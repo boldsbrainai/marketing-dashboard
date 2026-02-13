@@ -50,3 +50,6 @@ next-env.d.ts
 # claude-mem auto-generated
 **/CLAUDE.md
 hermes-seed-fix.bundle
+
+# runtime state
+/state/

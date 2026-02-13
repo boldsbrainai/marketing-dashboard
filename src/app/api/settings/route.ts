@@ -1,14 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getDb, getDbPath } from '@/lib/db';
 import { getSeedCount } from '@/lib/queries';
 import fs from 'node:fs';
-import path from 'node:path';
 import { requireApiUser } from '@/lib/api-auth';
-import { getHermesStateDir } from '@/lib/hermes-state';
-
-const DB_PATH = process.env.HERMES_DB_PATH || path.join(process.cwd(), 'hermes.db');
-const STATE_DIR = getHermesStateDir();
-
 const TABLE_NAMES = [
   'content_posts',
   'leads',
@@ -32,7 +26,7 @@ export async function GET(request: Request) {
     // Get DB file size
     let db_size_mb = 0;
     try {
-      const stat = fs.statSync(DB_PATH);
+      const stat = fs.statSync(getDbPath());
       db_size_mb = stat.size / (1024 * 1024);
     } catch {
       // file might not exist yet
@@ -51,8 +45,6 @@ export async function GET(request: Request) {
     const seed_count = getSeedCount();
 
     return NextResponse.json({
-      db_path: DB_PATH,
-      state_dir: STATE_DIR,
       db_size_mb,
       tables,
       last_sync: null, // could track this in a metadata table

@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { requireApiUser } from '@/lib/api-auth';
 
-// Server-only env var (preferred). Keep NEXT_PUBLIC_* as back-compat fallback.
-const heliusUrl = process.env.HELIUS_URL || process.env.NEXT_PUBLIC_HELIUS_URL;
+// Server-only env var (do not use NEXT_PUBLIC_* for secrets).
+const heliusUrl = process.env.HELIUS_URL;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

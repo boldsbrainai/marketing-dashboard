@@ -2,7 +2,7 @@
 
 Goal: keep `hermes-dashboard` "plug-and-play" across OpenClaw instances by avoiding:
 
-- hardcoded home directories (`/home/leads/...`)
+- hardcoded home directories (`/home/<user>/...`)
 - secrets inside unit files
 
 ## Recommended Layout
@@ -49,3 +49,7 @@ OpenClaw instance discovery:
 If you currently have a systemd drop-in (e.g. `override.conf`) that sets secrets via `Environment=...`,
 move those values into the env file and remove them from the drop-in.
 
+
+## Build Notes
+
+Use `pnpm build:standalone` for deployments that run `.next/standalone/server.js`, so `/_next/static/*` assets are copied into the standalone bundle.
