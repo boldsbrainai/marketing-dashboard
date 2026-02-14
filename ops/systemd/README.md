@@ -53,3 +53,17 @@ move those values into the env file and remove them from the drop-in.
 ## Build Notes
 
 Use `pnpm build:standalone` for deployments that run `.next/standalone/server.js`, so `/_next/static/*` assets are copied into the standalone bundle.
+
+## 1Password (Recommended)
+
+If you deploy with 1Password, the standalone entrypoint supports resolving secrets at runtime via op run.
+
+- Non-secret config: /etc/hermes-dashboard/hermes-dashboard.env
+- op:// references (non-secret template): /etc/hermes-dashboard/hermes-dashboard.op.env
+- Required secret for op: OP_SERVICE_ACCOUNT_TOKEN (set via systemd EnvironmentFile or another secret store)
+
+A template for the op env file lives at: ops/1password/hermes-dashboard.op.env.example
+
+Notes:
+- Analytics keys like PLAUSIBLE_SITE_ID / PLAUSIBLE_API_KEY should live in 1Password and be referenced from the op env template.
+- scripts/start-standalone.sh will use op run automatically when op + OP_SERVICE_ACCOUNT_TOKEN are present.

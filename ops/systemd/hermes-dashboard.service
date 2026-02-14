@@ -14,7 +14,10 @@ WorkingDirectory=/opt/hermes-dashboard
 # Point this at your deployment-specific env file.
 EnvironmentFile=-/etc/hermes-dashboard/hermes-dashboard.env
 
-ExecStart=/usr/bin/pnpm start
+# Optional: path to a 1Password op:// env template file (non-secret).
+Environment=HERMES_OP_ENV_FILE=/etc/hermes-dashboard/hermes-dashboard.op.env
+
+ExecStart=/opt/hermes-dashboard/scripts/start-standalone.sh
 Restart=on-failure
 RestartSec=3
 

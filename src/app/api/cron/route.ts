@@ -3,8 +3,18 @@ import { getDb } from '@/lib/db';
 import { promises as fs } from 'node:fs';
 import fsSync from 'node:fs';
 import path from 'node:path';
-import { requireApiUser } from '@/lib/api-auth';
-import { getInstance, resolveOpenClawPaths } from '@/lib/instances';
+import { requireApiEditor, requireApiUser } from '@/lib/api-auth';
+import { requireUser } from '@/lib/auth';
+import { logAudit } from '@/lib/audit';
+import { allowCronWrite, getInstance, resolveOpenClawPaths } from '@/lib/instances';
+import {
+  normalizeJobId,
+  readCronJobsFile,
+  toggleCronJob,
+  triggerCronJobNow,
+  writeCronJobsFile,
+  type CronJobConfig,
+} from '@/lib/cron-jobs';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,37 +82,18 @@ export async function POST(request: Request) {
   }
 }
 
-interface CronJob {
-  id: string;
-  agent: string;
-  schedule: string;
-  message: string;
-  enabled: boolean;
-  timezone?: string;
-  lastRun?: string | null;
-  lastResult?: string | null;
-  lastDuration?: number | null;
-  nextRun?: string | null;
-}
-
 export async function GET(request: Request) {
   const auth = requireApiUser(request);
   if (auth) return auth;
   try {
+    const actor = requireUser(request);
     const instance = getInstance(getInstanceId(request));
     const { cronDir } = resolveOpenClawPaths(instance);
     const logsDir = path.join(cronDir, 'logs');
 
     // Read cron jobs config
-    const jobsPath = path.join(cronDir, 'jobs.json');
-    let jobs: CronJob[] = [];
-    try {
-      const raw = await fs.readFile(jobsPath, 'utf-8');
-      const parsed = JSON.parse(raw);
-      jobs = Array.isArray(parsed) ? parsed : parsed.jobs || [];
-    } catch {
-      // No cron config yet
-    }
+    const jobsFile = await readCronJobsFile(cronDir);
+    const jobs = jobsFile.jobs as CronJobConfig[];
 
     // Read recent logs for each job
     const enriched = await Promise.all(
@@ -132,10 +123,55 @@ export async function GET(request: Request) {
       }),
     );
 
-    return NextResponse.json({ instance: instance.id, jobs: enriched });
+    const isEditor = actor.role === 'admin' || actor.role === 'editor';
+    const canWrite = allowCronWrite() && isEditor;
+    return NextResponse.json({ instance: instance.id, jobs: enriched, can_write: canWrite, can_templates_write: isEditor });
   } catch (error) {
     console.error('GET /api/cron error:', error);
     return NextResponse.json({ error: 'Failed to read cron status' }, { status: 500 });
   }
 }
 
+/**
+ * PUT /api/cron — Toggle or trigger an existing cron job.
+ * Body: { id: string, action: "toggle" | "trigger" }
+ */
+export async function PUT(request: Request) {
+  const auth = requireApiEditor(request);
+  if (auth) return auth;
+  if (!allowCronWrite()) {
+    return NextResponse.json({ error: 'Cron writes are disabled (set HERMES_ALLOW_CRON_WRITE=true)' }, { status: 403 });
+  }
+
+  const actor = requireUser(request);
+  const body = await request.json().catch(() => ({}));
+  const id = normalizeJobId(body?.id);
+  const action = body?.action === 'toggle' || body?.action === 'trigger' ? body.action : null;
+
+  if (!id) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
+  if (!action) return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
+
+  try {
+    const instance = getInstance(getInstanceId(request));
+    const { cronDir } = resolveOpenClawPaths(instance);
+    const jobsFile = await readCronJobsFile(cronDir);
+    const next =
+      action === 'toggle'
+        ? toggleCronJob(jobsFile, id)
+        : triggerCronJobNow(jobsFile, id);
+
+    if (!next) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    await writeCronJobsFile(cronDir, next);
+
+    logAudit({
+      actor,
+      action: action === 'toggle' ? 'cron.toggle' : 'cron.trigger',
+      target: `cron:${instance.id}:${id}`,
+      detail: { instance: instance.id },
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}

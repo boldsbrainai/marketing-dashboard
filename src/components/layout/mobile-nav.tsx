@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation';
 import {
   Gauge, Bot, Mail, Contact, MoreHorizontal,
   PenLine, MessageCircle, Zap, FlaskConical, Search,
-  BarChart3, BrainCircuit, Rocket, List, Settings,
+  BarChart3, LineChart, BrainCircuit, Rocket, Clock, List, Settings,
+  FolderOpen,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
 import { useDashboard } from '@/store';
@@ -48,9 +49,10 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'Operate',
     items: [
       { href: '/agents/comms', label: 'Comms', icon: MessageCircle },
+      { href: '/agents/workspace', label: 'Workspace', icon: FolderOpen },
       { href: '/content', label: 'Content', icon: PenLine, countKey: 'content' },
       { href: '/engagement', label: 'Engagement', icon: MessageCircle },
-      { href: '/automations', label: 'Automations', icon: Zap, countKey: 'total_pending' },
+      { href: '/automations', label: 'Automations', icon: Zap, countKey: 'outreach' },
       { href: '/experiments', label: 'Experiments', icon: FlaskConical },
     ],
   },
@@ -59,8 +61,10 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/research', label: 'Research', icon: Search, countKey: 'signals_today' },
       { href: '/kpis', label: 'KPIs', icon: BarChart3 },
+      { href: '/analytics', label: 'Analytics', icon: LineChart },
       { href: '/memory', label: 'Memory', icon: BrainCircuit },
       { href: '/deploy', label: 'Deploy', icon: Rocket },
+      { href: '/cron', label: 'Cron', icon: Clock },
       { href: '/activity', label: 'Activity', icon: List },
       { href: '/settings', label: 'Settings', icon: Settings },
     ],

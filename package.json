@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
-    "test": "node --import tsx --test src/lib/auth.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/lib/*.test.ts",
     "prepare:standalone": "bash scripts/prepare-standalone.sh",
     "build:standalone": "pnpm build && pnpm run prepare:standalone",
     "postbuild": "pnpm run prepare:standalone"
@@ -16,6 +17,8 @@
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "clsx": "^2.1.1",
+    "google-auth-library": "^10.5.0",
+    "imapflow": "^1.2.9",
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
     "next-themes": "^0.4.6",

@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
   Gauge, Bot, PenLine, MessageCircle, Mail, Contact, Zap,
-  Search, BarChart3, BrainCircuit, Rocket, List, Settings,
+  Search, BarChart3, LineChart, BrainCircuit, Rocket, Clock, List, Settings,
+  FolderOpen,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
 import { useDashboard } from '@/store';
@@ -38,6 +39,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/', label: 'Overview', icon: Gauge },
       { href: '/agents/squads', label: 'Squads', icon: Bot },
       { href: '/agents/comms', label: 'Comms', icon: MessageCircle },
+      { href: '/agents/workspace', label: 'Workspace', icon: FolderOpen },
     ],
   },
   {
@@ -47,7 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/engagement', label: 'Engagement', icon: MessageCircle },
       { href: '/outreach', label: 'Outreach', icon: Mail, countKey: 'outreach' },
       { href: '/crm', label: 'CRM', icon: Contact, countKey: 'new_leads' },
-      { href: '/automations', label: 'Automations', icon: Zap, countKey: 'total_pending' },
+      { href: '/automations', label: 'Automations', icon: Zap, countKey: 'outreach' },
     ],
   },
   {
@@ -55,8 +57,10 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/research', label: 'Research', icon: Search, countKey: 'signals_today' },
       { href: '/kpis', label: 'KPIs', icon: BarChart3 },
+      { href: '/analytics', label: 'Analytics', icon: LineChart },
       { href: '/memory', label: 'Memory', icon: BrainCircuit },
       { href: '/deploy', label: 'Deploy', icon: Rocket },
+      { href: '/cron', label: 'Cron', icon: Clock },
       { href: '/activity', label: 'Activity', icon: List },
     ],
   },

@@ -29,10 +29,12 @@ export async function GET(request: Request) {
   }>;
 
   const sessions = rows.map(row => {
-    // Parse conversation_id: "session:{agentId}:{sessionId}"
+
+    // Parse conversation_id: "session:{instanceId}:{agentId}:{sessionId}" (back-compat: "session:{agentId}:{sessionId}")
     const parts = row.conversation_id.split(':');
-    const agentId = parts[1] || 'unknown';
-    const sessionId = parts[2] || '';
+    const instanceId = parts[1] || 'default';
+    const agentId = parts.length >= 4 ? (parts[2] || 'unknown') : (parts[1] || 'unknown');
+    const sessionId = parts.length >= 4 ? (parts[3] || '') : (parts[2] || '');
 
     // Get first user message as preview
     const firstMsg = db.prepare(
@@ -44,6 +46,7 @@ export async function GET(request: Request) {
       : undefined;
 
     return {
+      instance_id: instanceId,
       agent_id: agentId,
       session_id: sessionId,
       conversation_id: row.conversation_id,

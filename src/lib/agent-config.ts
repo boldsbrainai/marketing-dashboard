@@ -68,18 +68,24 @@ type AgentStaticMeta = {
   cronJobs?: CronJob[];
 };
 
-const DEFAULT_ORDER = ['hermes', 'apollo', 'athena', 'metis', 'kb-manager'];
+const DEFAULT_ORDER = ['main', 'hermes', 'apollo', 'athena', 'metis', 'kb-manager'];
 
 const AGENT_ID_ALIASES: Record<string, string> = {
   marketing: 'hermes',
   sales: 'apollo',
   knowledge: 'athena',
   analytics: 'metis',
-  manager: 'kb-manager',
-  core: 'kb-manager',
+  manager: 'main',
+  core: 'main',
 };
 
 const DEFAULT_STATIC_META: Record<string, AgentStaticMeta> = {
+  main: {
+    name: 'Main',
+    emoji: '🎛️',
+    role: 'Orchestrator',
+    description: 'Primary agent that coordinates the rest of the system.',
+  },
   hermes: {
     name: 'Hermes',
     emoji: '\u{1F3DB}\u{FE0F}',
@@ -175,11 +181,28 @@ function readOpenClawConfig(openclawConfigPath: string): OpenClawConfig | null {
 function discoverAgentIdsFromFs(agentsDir: string): string[] {
   try {
     if (!fs.existsSync(agentsDir)) return [];
-    return fs
-      .readdirSync(agentsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => d.name)
-      .filter((id) => id !== 'main');
+
+    const dirents = fs.readdirSync(agentsDir, { withFileTypes: true });
+    const out: string[] = [];
+    for (const d of dirents) {
+      const fullPath = path.join(agentsDir, d.name);
+
+      if (d.isDirectory()) {
+        out.push(d.name);
+        continue;
+      }
+
+      // Many deployments store canonical agent ids as symlinks (e.g. hermes -> marketing).
+      if (d.isSymbolicLink()) {
+        try {
+          if (fs.statSync(fullPath).isDirectory()) out.push(d.name);
+        } catch {
+          // ignore broken symlinks
+        }
+      }
+    }
+
+    return out;
   } catch {
     return [];
   }

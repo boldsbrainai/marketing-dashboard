@@ -30,7 +30,7 @@ import {
 function resetAuthState() {
   ensureAuthTables();
   const db = getDb();
-  db.exec('DELETE FROM sessions; DELETE FROM users;');
+  db.exec('DELETE FROM sessions; DELETE FROM users; DELETE FROM google_login_requests;');
 }
 
 beforeEach(() => {

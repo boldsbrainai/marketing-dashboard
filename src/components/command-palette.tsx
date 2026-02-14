@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Search, User, PenLine, Radio, FlaskConical, List,
-  Gauge, MessageCircle, Mail, BarChart3, ArrowRight, BrainCircuit, Rocket,
+  Gauge, MessageCircle, Mail, BarChart3, LineChart, ArrowRight, BrainCircuit, Rocket,
 } from 'lucide-react';
 import { useDashboard } from '@/store';
 
@@ -25,6 +25,7 @@ const NAV_ITEMS = [
   { label: 'Experiments', path: '/experiments', icon: FlaskConical },
   { label: 'Research', path: '/research', icon: Search },
   { label: 'KPIs', path: '/kpis', icon: BarChart3 },
+  { label: 'Analytics', path: '/analytics', icon: LineChart },
   { label: 'Memory', path: '/memory', icon: BrainCircuit },
   { label: 'Deploy', path: '/deploy', icon: Rocket },
   { label: 'Activity', path: '/activity', icon: List },

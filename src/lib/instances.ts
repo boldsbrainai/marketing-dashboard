@@ -148,3 +148,10 @@ export function allowCronWrite(): boolean {
   );
 }
 
+export function allowWorkspaceWrite(): boolean {
+  return (
+    String(process.env.HERMES_ALLOW_WORKSPACE_WRITE ?? '')
+      .trim()
+      .toLowerCase() === 'true'
+  );
+}

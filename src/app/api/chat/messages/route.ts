@@ -60,15 +60,14 @@ export async function POST(req: NextRequest) {
     const actor = requireUser(req as Request);
     const db = getDb();
     const body = await req.json();
-
-    const from = (body.from || '').trim();
+    const from = (typeof actor?.username === 'string' && actor.username.trim()) ? actor.username.trim() : 'operator';
     const to = body.to ? (body.to as string).trim() : null;
     const content = (body.content || '').trim();
     const message_type = body.message_type || 'text';
     const conversation_id = body.conversation_id || `conv_${Date.now()}`;
 
-    if (!from || !content) {
-      return NextResponse.json({ error: '"from" and "content" are required' }, { status: 400 });
+    if (!content) {
+      return NextResponse.json({ error: 'content is required' }, { status: 400 });
     }
 
     // Save the human message

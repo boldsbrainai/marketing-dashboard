@@ -3,15 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  Cpu, Clock, Wrench, Zap, ChevronDown, ChevronUp,
-  Circle, Activity, Calendar,
+  Cpu, Wrench, Zap, ChevronDown, ChevronUp,
+  Circle, Activity,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
 import { useDashboard } from '@/store';
-import { CronStatus } from '@/components/cron/cron-status';
 import { timeAgo } from '@/lib/utils';
 import type { AgentRuntime, ActivityEntry, MemoryHealthPayload, MemoryDriftPayload } from '@/types';
-import type { AgentDefinition, CronJob, AgentSkill } from '@/lib/agent-config';
+import type { AgentDefinition, AgentSkill } from '@/lib/agent-config';
 
 type AgentWithRuntime = AgentDefinition & AgentRuntime;
 
@@ -222,9 +221,6 @@ export default function AgentsPage() {
           <AgentCard key={agent.id} agent={agent} />
         ))}
       </div>
-
-      {/* Cron job status */}
-      <CronStatus />
       </section>
     </div>
   );
@@ -341,30 +337,6 @@ function AgentCard({ agent }: { agent: AgentWithRuntime }) {
       {/* Expanded Detail */}
       {expanded && (
         <div className="px-5 pb-5 space-y-4 border-t border-border/30 animate-in">
-          {/* Schedule */}
-          <div>
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2 mt-4">
-              <Calendar size={12} />
-              <span className="font-medium">Schedule</span>
-            </div>
-            <div className="space-y-1.5">
-              {agent.cronJobs.map((job: CronJob) => (
-                <div key={job.id} className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <Clock size={10} className="text-muted-foreground" />
-                    <span>{job.label}</span>
-                    {job.days && (
-                      <span className="text-[9px] bg-muted px-1.5 py-0.5 rounded uppercase">
-                        {job.days.join(', ')}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-muted-foreground font-mono">{job.schedule}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
           {/* Skill Details */}
           <div>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">

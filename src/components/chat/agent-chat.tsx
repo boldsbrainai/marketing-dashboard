@@ -10,6 +10,7 @@ import type { ChatMessage, ChatConversation } from '@/types';
 type AgentListItem = { id: string; name: string; emoji: string };
 
 const DEFAULT_AGENTS = [
+  { id: 'main', name: 'Main', emoji: '🎛️', color: 'text-indigo-400', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
   { id: 'hermes', name: 'Hermes', emoji: '\u{1F3DB}\u{FE0F}', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
   { id: 'apollo', name: 'Apollo', emoji: '\u{1F3AF}', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
   { id: 'athena', name: 'Athena', emoji: '\u{1F9E0}', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
@@ -45,12 +46,33 @@ function parseConversationName(
   agents: AgentListItem[],
   lastMessage?: { content: string; from_agent: string } | null,
 ): { label: string; sublabel: string; emoji: string } {
-  // Session conversations: "session:{agentId}:{uuid}"
+  // Mission-control conversations
+  if (convId === 'mc:orchestrator') {
+    return { label: 'Orchestrator', sublabel: 'Main agent', emoji: '🎛️' };
+  }
+
+  const mcBridge = convId.match(/^mc:a2a:([^:]+):([^:]+)$/);
+  if (mcBridge) {
+    const fromId = mcBridge[1];
+    const toId = mcBridge[2];
+    const fromAgent = agents.find(a => a.id === fromId);
+    const toAgent = agents.find(a => a.id === toId);
+    const fromName = fromAgent?.name || fromId;
+    const toName = toAgent?.name || toId;
+    return { label: `${fromName} → ${toName}`, sublabel: 'Agent bridge', emoji: '🤝' };
+  }
+
+  // Session conversations: "session:{instanceId}:{agentId}:{uuid}"
   if (convId.startsWith('session:')) {
     const parts = convId.split(':');
-    const agentId = parts[1] || 'unknown';
+    const instanceId = parts[1] || 'default';
+
+    // Back-compat: older rows may be "session:{agentId}:{uuid}".
+    const agentId = parts.length >= 4 ? (parts[2] || 'unknown') : (parts[1] || 'unknown');
+    const sessionId = parts.length >= 4 ? (parts[3] || '') : (parts[2] || '');
+
     const agent = agents.find(a => a.id === agentId);
-    const emoji = agent?.emoji || '\u{1F916}';
+    const emoji = agent?.emoji || '🤖';
     const agentName = agent?.name || agentId;
 
     // Try to extract cron job name from first operator message
@@ -58,41 +80,56 @@ function parseConversationName(
     if (lastMessage?.from_agent === 'operator') {
       const cronMatch = lastMessage.content.match(/\[cron:[\w-]+\s+([^\]]+)\]/);
       if (cronMatch) {
-        return { label: `${agentName} \u00b7 ${cronMatch[1]}`, sublabel: 'Cron session', emoji };
+        return { label: `${agentName} · ${cronMatch[1]}`, sublabel: `Cron session · ${instanceId}`, emoji };
       }
       // Telegram message
       if (lastMessage.content.startsWith('[Telegram')) {
-        return { label: `${agentName} \u00b7 Telegram`, sublabel: 'DM session', emoji };
+        return { label: `${agentName} · Telegram`, sublabel: `DM session · ${instanceId}`, emoji };
       }
     }
 
-    return { label: `${agentName} Session`, sublabel: parts[2]?.slice(0, 8) + '...', emoji };
+    const short = sessionId ? `${sessionId.slice(0, 8)}...` : '';
+    return { label: `${agentName} Session`, sublabel: `${instanceId}${short ? ' · ' + short : ''}`, emoji };
   }
 
-  // Cross-agent conversations
-  if (convId === 'hermes_apollo') {
-    return { label: 'Hermes + Apollo', sublabel: 'Team conversation', emoji: '\u{1F91D}' };
+  // Cross-agent conversations, e.g. "hermes_apollo"
+  const firstUnderscore = convId.indexOf('_');
+  if (firstUnderscore !== -1 && convId.indexOf('_', firstUnderscore + 1) === -1) {
+    const aId = convId.slice(0, firstUnderscore);
+    const bId = convId.slice(firstUnderscore + 1);
+    const a = agents.find(x => x.id === aId);
+    const b = agents.find(x => x.id === bId);
+    if (a && b) {
+      return { label: `${a.name} + ${b.name}`, sublabel: 'Team conversation', emoji: '🤝' };
+    }
   }
 
   // Direct agent conversations
   if (convId.startsWith('agent_')) {
     const agentId = convId.replace('agent_', '');
     const agent = agents.find(a => a.id === agentId);
-    return { label: agent?.name || agentId, sublabel: 'Direct chat', emoji: agent?.emoji || '\u{1F916}' };
+    return { label: agent?.name || agentId, sublabel: 'Direct chat', emoji: agent?.emoji || '🤖' };
   }
 
-  return { label: convId, sublabel: '', emoji: '\u{1F4AC}' };
+  return { label: convId, sublabel: '', emoji: '💬' };
 }
 
 export function AgentChat() {
-  const [role, setRole] = useState<Role>('viewer');
+  const [me, setMe] = useState<{ username: string; role: Role } | null>(null);
+  const role: Role = me?.role ?? 'viewer';
+  const username = me?.username ?? 'operator';
   const canEdit = role === 'admin' || role === 'editor';
 
   useEffect(() => {
     fetch('/api/auth/me')
       .then((r) => r.json())
-      .then((payload) => setRole(payload?.user?.role === 'admin' || payload?.user?.role === 'editor' ? payload.user.role : 'viewer'))
-      .catch(() => setRole('viewer'));
+      .then((payload) => {
+        const u = payload?.user;
+        const nextRole: Role = u?.role === 'admin' || u?.role === 'editor' ? u.role : 'viewer';
+        const nextUsername = typeof u?.username === 'string' && u.username.trim() ? u.username.trim() : 'operator';
+        setMe({ username: nextUsername, role: nextRole });
+      })
+      .catch(() => setMe({ username: 'operator', role: 'viewer' }));
   }, []);
 
   // Sync session transcripts on mount
@@ -168,7 +205,7 @@ export function AgentChat() {
     if (!text || !activeConv || sending || !canEdit) return;
 
     // Determine recipient from conversation or @mention
-    const mentionMatch = text.match(/^@(\w+)\s/);
+    const mentionMatch = text.match(/^@([\w-]+)\s/);
     let to = mentionMatch ? mentionMatch[1] : null;
     const cleanContent = mentionMatch ? text.slice(mentionMatch[0].length) : text;
 
@@ -182,7 +219,7 @@ export function AgentChat() {
     const optimistic: ChatMessage = {
       id: tempId,
       conversation_id: activeConv,
-      from_agent: 'nyk',
+      from_agent: username,
       to_agent: to,
       content: cleanContent,
       message_type: 'text',
@@ -201,7 +238,6 @@ export function AgentChat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from: 'nyk',
           to,
           content: cleanContent,
           conversation_id: activeConv,
@@ -333,7 +369,7 @@ export function AgentChat() {
                       </div>
                       {conv.last_message && (
                         <p className="text-[11px] text-muted-foreground/60 truncate mt-0.5">
-                          {conv.last_message.from_agent === 'nyk'
+                          {conv.last_message.from_agent === username
                             ? `You: ${conv.last_message.content}`
                             : conv.last_message.content}
                         </p>
@@ -394,7 +430,7 @@ export function AgentChat() {
                           <MessageBubble
                             key={msg.id}
                             message={msg}
-                            isHuman={msg.from_agent === 'nyk' || msg.from_agent === 'human'}
+                            isHuman={msg.from_agent === username || msg.from_agent === 'operator' || msg.from_agent === 'human'}
                             isGrouped={isGroupedWithPrevious(group.messages, idx)}
                           />
                         ))}

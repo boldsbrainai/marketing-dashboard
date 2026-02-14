@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { requireApiUser } from '@/lib/api-auth';
+import { requireUser } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,16 +30,19 @@ export async function GET(request: Request) {
   try {
     const db = getDb();
 
+    const actor = requireUser(request as Request);
+    const username = (typeof actor?.username === 'string' && actor.username.trim()) ? actor.username.trim() : 'operator';
+
     const conversations = db.prepare(`
       SELECT
         m.conversation_id,
         MAX(m.created_at) as last_message_at,
         COUNT(*) as message_count,
-        SUM(CASE WHEN m.read_at IS NULL AND m.from_agent != 'nyk' THEN 1 ELSE 0 END) as unread_count
+        SUM(CASE WHEN m.read_at IS NULL AND m.from_agent != ? THEN 1 ELSE 0 END) as unread_count
       FROM messages m
       GROUP BY m.conversation_id
       ORDER BY last_message_at DESC
-    `).all() as ConversationRow[];
+    `).all(username) as ConversationRow[];
 
     const withLastMessage = conversations.map((conv) => {
       const lastMsg = db.prepare(`

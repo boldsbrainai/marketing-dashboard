@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   Zap, Clock, CheckCircle, AlertTriangle, Mail, PenLine,
   Calendar, Activity, Timer, ThumbsUp, ThumbsDown, Loader2,
@@ -155,15 +156,18 @@ export default function AutomationsPage() {
 
         {/* Approval Queue */}
         <div className="panel">
-          <div className="panel-header">
+          <div className="panel-header flex items-center justify-between">
             <h3 className="section-title flex items-center gap-2">
-              <CheckCircle size={14} /> Approval Queue
+              <CheckCircle size={14} /> Automation Approvals
               {approvals.length > 0 && (
                 <span className="text-[10px] bg-warning/15 text-warning px-2 py-0.5 rounded-full font-semibold">
                   {approvals.length}
                 </span>
               )}
             </h3>
+            <Link href="/content" className="text-[10px] text-primary hover:underline">
+              Content queue
+            </Link>
           </div>
           <div className="panel-body">
             {approvals.length === 0 ? (

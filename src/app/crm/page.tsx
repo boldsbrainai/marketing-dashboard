@@ -2,17 +2,19 @@
 
 import { useState, useCallback, useEffect, useRef, DragEvent } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  Contact, Search, ChevronRight, ChevronLeft, Mail, Linkedin, Star,
-  Clock, Building2, User, ArrowUpDown, X, Pause, Play,
+  Contact, Search, ChevronRight, Star,
+  Building2, User, ArrowUpDown, X, Pause,
   Send, Eye, CircleDot, MessageSquare, CalendarCheck, CheckCircle, Ban,
-  ChevronDown, ChevronUp, Check, XCircle, Edit3, Save, Loader2,
-  LayoutList, Kanban, AlertCircle, BarChart3, GripVertical, ExternalLink,
+  Check, XCircle,
+  LayoutList, Kanban, AlertCircle, BarChart3, ExternalLink,
 } from 'lucide-react';
 import { useSmartPoll } from '@/hooks/use-smart-poll';
 import { useDashboard } from '@/store';
 import { timeAgo } from '@/lib/utils';
-import type { Lead, Sequence, FunnelStep } from '@/types';
+import type { Lead, FunnelStep } from '@/types';
+import { LeadDetailPanel } from '@/components/crm/lead-detail-panel';
 
 interface CrmData {
   leads: Lead[];
@@ -29,12 +31,6 @@ interface CrmData {
   };
   tasks_overdue?: number;
   tasks_due_today?: number;
-}
-
-interface LeadDetail {
-  lead: Lead & { pause_outreach?: number };
-  sequences: Sequence[];
-  timeline: { id: number; type: string; description: string; timestamp: string }[];
 }
 
 const STAGES = ['new', 'validated', 'approved', 'contacted', 'replied', 'interested', 'booked', 'qualified'] as const;
@@ -75,6 +71,43 @@ type ViewMode = 'list' | 'kanban';
 type Role = 'admin' | 'editor' | 'viewer';
 
 export default function CrmPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlLeadId = searchParams.get('lead');
+  const urlStatus = searchParams.get('status') || '';
+  const urlTier = searchParams.get('tier') || '';
+  const urlSearch = searchParams.get('search') || '';
+  const urlView = searchParams.get('view') || '';
+  const urlSort = searchParams.get('sort') || '';
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createSubmitting, setCreateSubmitting] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    first_name: '',
+    last_name: '',
+    title: '',
+    company: '',
+    email: '',
+    linkedin_url: '',
+    source: '',
+    industry_segment: '',
+    company_size: '',
+    score: '',
+    tier: '',
+    status: 'new',
+    notes: '',
+    next_action_at: '',
+  });
+
+  useEffect(() => {
+    if (!createOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [createOpen]);
+
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState('');
   const [tierFilter, setTierFilter] = useState('');
@@ -87,6 +120,22 @@ export default function CrmPage() {
     return () => clearInterval(t);
   }, []);
   const [selectedLead, setSelectedLead] = useState<string | null>(null);
+  useEffect(() => {
+    if (urlLeadId && (!selectedLead || selectedLead !== urlLeadId)) {
+      setSelectedLead(urlLeadId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlLeadId]);
+
+  // Keep local filters in sync with URL (back/forward, deep links).
+  useEffect(() => {
+    if (urlStatus !== stageFilter) setStageFilter(urlStatus);
+    if (urlTier !== tierFilter) setTierFilter(urlTier);
+    if (urlSearch !== search) setSearch(urlSearch);
+    if ((urlView === 'kanban' || urlView === 'list') && urlView !== viewMode) setViewMode(urlView);
+    if ((urlSort === 'score' || urlSort === 'created_at') && urlSort !== sortField) setSortField(urlSort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlStatus, urlTier, urlSearch, urlView, urlSort]);
   const [sortField, setSortField] = useState<'score' | 'created_at'>('score');
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
@@ -101,6 +150,20 @@ export default function CrmPage() {
       .then((payload) => setRole(payload?.user?.role === 'admin' || payload?.user?.role === 'editor' ? payload.user.role : 'viewer'))
       .catch(() => setRole('viewer'));
   }, []);
+
+  useEffect(() => {
+    const next = new URLSearchParams();
+    if (selectedLead) next.set('lead', selectedLead);
+    if (stageFilter) next.set('status', stageFilter);
+    if (tierFilter) next.set('tier', tierFilter);
+    if (search) next.set('search', search);
+    if (viewMode !== 'list') next.set('view', viewMode);
+    if (sortField !== 'score') next.set('sort', sortField);
+    if (realOnly) next.set('real', 'true');
+    const qs = next.toString();
+    router.replace(qs ? `/crm?${qs}` : '/crm', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLead, stageFilter, tierFilter, search, viewMode, sortField, realOnly]);
 
   useEffect(() => {
     fetch('/api/settings/crm')
@@ -151,6 +214,64 @@ export default function CrmPage() {
   }, []);
   const canEdit = role === 'admin' || role === 'editor';
 
+  async function submitCreateLead(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canEdit) return;
+    setCreateSubmitting(true);
+    try {
+      const payload: Record<string, unknown> = {
+        first_name: createForm.first_name || null,
+        last_name: createForm.last_name || null,
+        title: createForm.title || null,
+        company: createForm.company || null,
+        email: createForm.email || null,
+        linkedin_url: createForm.linkedin_url || null,
+        source: createForm.source || null,
+        industry_segment: createForm.industry_segment || null,
+        company_size: createForm.company_size || null,
+        tier: createForm.tier || null,
+        status: createForm.status || 'new',
+        notes: createForm.notes || null,
+        next_action_at: createForm.next_action_at
+          ? new Date(`${createForm.next_action_at}T00:00:00.000Z`).toISOString()
+          : null,
+      };
+      if (createForm.score.trim()) payload.score = Number(createForm.score);
+
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create lead');
+
+      setCreateOpen(false);
+      setCreateForm({
+        first_name: '',
+        last_name: '',
+        title: '',
+        company: '',
+        email: '',
+        linkedin_url: '',
+        source: '',
+        industry_segment: '',
+        company_size: '',
+        score: '',
+        tier: '',
+        status: 'new',
+        notes: '',
+        next_action_at: '',
+      });
+      setRefreshKey(k => k + 1);
+      if (data?.lead?.id) setSelectedLead(data.lead.id);
+    } catch {
+      // ignore
+    } finally {
+      setCreateSubmitting(false);
+    }
+  }
+
   // Kanban drag handler
   async function handleKanbanDrop(leadId: string, newStage: string) {
     if (!canEdit) return;
@@ -169,9 +290,68 @@ export default function CrmPage() {
 
   return (
     <div className="space-y-6 animate-in">
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button
+            type="button"
+            aria-label="Close"
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setCreateOpen(false)}
+          />
+          <div className="panel relative w-full max-w-xl" role="dialog" aria-modal="true" aria-labelledby="crm-add-lead-title">
+            <div className="panel-header flex items-center justify-between">
+              <h2 id="crm-add-lead-title" className="text-sm font-medium">Add Lead</h2>
+              <button type="button" aria-label="Close add lead" onClick={() => setCreateOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <X size={16} />
+              </button>
+            </div>
+            <form onSubmit={submitCreateLead} className="panel-body space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input name="first_name" aria-label="First name" autoComplete="given-name" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="First name" value={createForm.first_name} onChange={(e) => setCreateForm(v => ({ ...v, first_name: e.target.value }))} />
+                <input name="last_name" aria-label="Last name" autoComplete="family-name" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Last name" value={createForm.last_name} onChange={(e) => setCreateForm(v => ({ ...v, last_name: e.target.value }))} />
+                <input name="title" aria-label="Title" autoComplete="organization-title" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Title" value={createForm.title} onChange={(e) => setCreateForm(v => ({ ...v, title: e.target.value }))} />
+                <input name="company" aria-label="Company" autoComplete="organization" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Company" value={createForm.company} onChange={(e) => setCreateForm(v => ({ ...v, company: e.target.value }))} />
+                <input name="email" aria-label="Email" autoComplete="email" type="email" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Email" value={createForm.email} onChange={(e) => setCreateForm(v => ({ ...v, email: e.target.value }))} />
+                <input name="linkedin_url" aria-label="LinkedIn URL" autoComplete="url" type="url" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="LinkedIn URL" value={createForm.linkedin_url} onChange={(e) => setCreateForm(v => ({ ...v, linkedin_url: e.target.value }))} />
+                <input name="source" aria-label="Source" autoComplete="off" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Source" value={createForm.source} onChange={(e) => setCreateForm(v => ({ ...v, source: e.target.value }))} />
+                <input name="industry_segment" aria-label="Industry segment" autoComplete="off" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Industry segment" value={createForm.industry_segment} onChange={(e) => setCreateForm(v => ({ ...v, industry_segment: e.target.value }))} />
+                <input name="company_size" aria-label="Company size" autoComplete="off" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Company size" value={createForm.company_size} onChange={(e) => setCreateForm(v => ({ ...v, company_size: e.target.value }))} />
+                <input name="score" aria-label="Score" inputMode="numeric" type="number" min={0} max={100} className="px-3 py-2 rounded-lg border border-border bg-background text-sm" placeholder="Score (0-100)" value={createForm.score} onChange={(e) => setCreateForm(v => ({ ...v, score: e.target.value }))} />
+                <select name="tier" aria-label="Tier" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" value={createForm.tier} onChange={(e) => setCreateForm(v => ({ ...v, tier: e.target.value }))}>
+                  <option value="">Tier (optional)</option>
+                  <option value="A">A</option>
+                  <option value="B">B</option>
+                  <option value="C">C</option>
+                </select>
+                <select name="status" aria-label="Stage" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" value={createForm.status} onChange={(e) => setCreateForm(v => ({ ...v, status: e.target.value }))}>
+                  {['new','validated','approved','contacted','replied','interested','booked','qualified','rejected','disqualified'].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+                <input name="next_action_at" aria-label="Next action date" type="date" className="px-3 py-2 rounded-lg border border-border bg-background text-sm" value={createForm.next_action_at} onChange={(e) => setCreateForm(v => ({ ...v, next_action_at: e.target.value }))} />
+              </div>
+              <textarea name="notes" aria-label="Notes" className="w-full text-sm rounded-lg border border-border bg-background px-3 py-2" rows={3} placeholder="Notes" value={createForm.notes} onChange={(e) => setCreateForm(v => ({ ...v, notes: e.target.value }))} />
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCreateOpen(false)}>Cancel</button>
+                <button type="submit" disabled={createSubmitting} className="btn btn-primary btn-sm">
+                  {createSubmitting ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-semibold">CRM</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">CRM</h1>
+          {canEdit && (
+            <button className="btn btn-primary btn-sm" onClick={() => setCreateOpen(true)}>
+              Add Lead
+            </button>
+          )}
+        </div>
         {data?.summary && (
           <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
             <span><strong className="text-foreground">{data.summary.total}</strong> leads</span>
@@ -276,6 +456,9 @@ export default function CrmPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             type="text"
+            name="search"
+            aria-label="Search leads"
+            autoComplete="off"
             placeholder="Search leads..."
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -285,6 +468,8 @@ export default function CrmPage() {
         <select
           value={tierFilter}
           onChange={e => setTierFilter(e.target.value)}
+          name="tier"
+          aria-label="Tier filter"
           className="px-3"
         >
           <option value="">All Tiers</option>
@@ -297,6 +482,8 @@ export default function CrmPage() {
         <div className="flex items-center border border-border/30 rounded-lg overflow-hidden">
           <button
             onClick={() => setViewMode('list')}
+            type="button"
+            aria-label="List view"
             className={`px-2.5 py-2 text-sm transition-colors ${
               viewMode === 'list' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -306,6 +493,8 @@ export default function CrmPage() {
           </button>
           <button
             onClick={() => setViewMode('kanban')}
+            type="button"
+            aria-label="Kanban view"
             className={`px-2.5 py-2 text-sm transition-colors ${
               viewMode === 'kanban' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'
             }`}
@@ -470,7 +659,6 @@ export default function CrmPage() {
         /* ─── Kanban View ────────────────────────────────── */
         <KanbanBoard
           leads={sorted}
-          funnel={data?.funnel || []}
           selectedLead={selectedLead}
           nowMs={nowMs}
           onSelectLead={(id) => setSelectedLead(selectedLead === id ? null : id)}
@@ -490,7 +678,6 @@ export default function CrmPage() {
 
 function KanbanBoard({
   leads,
-  funnel,
   selectedLead,
   nowMs,
   onSelectLead,
@@ -502,7 +689,6 @@ function KanbanBoard({
   slaNewDays,
 }: {
   leads: Lead[];
-  funnel: FunnelStep[];
   selectedLead: string | null;
   nowMs: number | null;
   onSelectLead: (id: string) => void;
@@ -538,7 +724,6 @@ function KanbanBoard({
         >
           {STAGES.map(stage => {
             const count = stageLeads[stage]?.length || 0;
-            const funnelStep = funnel.find(f => f.name === stage);
             const Icon = STAGE_ICONS[stage] || CircleDot;
 
             return (
@@ -763,10 +948,13 @@ function KanbanCard({ lead, selected, onSelect, nowMs, canEdit, slaStaleDays, sl
   }
 
   return (
-    <div
+    <button
+      type="button"
       draggable={canEdit}
       onDragStart={handleDragStart}
       onClick={onSelect}
+      aria-pressed={selected}
+      aria-label={`${lead.first_name ?? ''} ${lead.last_name ?? ''}${lead.company ? `, ${lead.company}` : ''}`.trim() || 'Lead'}
       className={`card p-2.5 transition-all text-left hover:border-primary/30 ${
         selected ? 'border-primary/50 bg-primary/5' : ''
       } ${isPaused ? 'opacity-60' : ''} ${canEdit ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
@@ -838,7 +1026,7 @@ function KanbanCard({ lead, selected, onSelect, nowMs, canEdit, slaStaleDays, sl
         )}
         {isPaused && <Pause size={10} className="text-warning" />}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -949,6 +1137,7 @@ function LeadRow({ lead, selected, onClick, nowMs, slaStaleDays, slaNewDays }: {
           onClick={(e) => e.stopPropagation()}
           className="text-muted-foreground hover:text-foreground"
           title="Open record"
+          aria-label="Open record"
         >
           <ExternalLink size={14} />
         </Link>
@@ -958,485 +1147,5 @@ function LeadRow({ lead, selected, onClick, nowMs, slaStaleDays, slaNewDays }: {
   );
 }
 
-/* ─── Lead Detail Panel ────────────────────────────────── */
 
-function LeadDetailPanel({ id, onClose, onMutate, canEdit, nowMs, slaStaleDays, slaNewDays }: { id: string; onClose: () => void; onMutate: () => void; canEdit: boolean; nowMs: number | null; slaStaleDays: number; slaNewDays: number }) {
-  const [editingNotes, setEditingNotes] = useState(false);
-  const [notesValue, setNotesValue] = useState('');
-  const [nextAction, setNextAction] = useState('');
-  const [expandedSeq, setExpandedSeq] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
-  const [detailRefresh, setDetailRefresh] = useState(0);
-
-  const { data, loading } = useSmartPoll<LeadDetail>(
-    () => fetch(`/api/crm?id=${id}`).then(r => {
-      if (!r.ok) throw new Error('Failed to load');
-      return r.json();
-    }),
-    { interval: 30_000, key: detailRefresh },
-  );
-
-  useEffect(() => {
-    if (data?.lead?.notes !== undefined) {
-      setNotesValue(data.lead.notes || '');
-    }
-    if (data?.lead?.next_action_at) {
-      setNextAction(data.lead.next_action_at.split('T')[0]);
-    }
-  }, [data?.lead?.notes, data?.lead?.next_action_at]);
-
-  function showFeedback(type: 'success' | 'error', msg: string) {
-    setFeedback({ type, msg });
-    setTimeout(() => setFeedback(null), 2500);
-  }
-
-  async function patchLead(updates: Record<string, unknown>) {
-    if (!canEdit) return;
-    setSaving(true);
-    try {
-      const res = await fetch('/api/crm', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, ...updates }),
-      });
-      if (!res.ok) throw new Error('Update failed');
-      showFeedback('success', 'Updated');
-      setDetailRefresh(k => k + 1);
-      onMutate();
-    } catch {
-      showFeedback('error', 'Failed to update');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function patchSequence(seqId: string, status: string) {
-    if (!canEdit) return;
-    setSaving(true);
-    try {
-      const res = await fetch('/api/crm', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: seqId, type: 'sequence', status }),
-      });
-      if (!res.ok) throw new Error('Update failed');
-      showFeedback('success', status === 'approved' ? 'Email approved' : 'Email rejected');
-      setDetailRefresh(k => k + 1);
-      onMutate();
-    } catch {
-      showFeedback('error', 'Failed to update');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (loading && !data) {
-    return (
-      <div className="panel p-6 sticky top-24 flex items-center justify-center h-64">
-        <Loader2 size={20} className="animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!data) {
-    return (
-      <div className="panel p-6 sticky top-24 text-center space-y-2">
-        <XCircle size={24} className="mx-auto text-destructive/60" />
-        <p className="text-sm text-muted-foreground">Failed to load lead</p>
-        <button onClick={() => setDetailRefresh(k => k + 1)} className="btn btn-ghost btn-sm">
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  const { lead, sequences, timeline } = data;
-  const isPaused = (lead as { pause_outreach?: number }).pause_outreach === 1;
-  const currentStageIdx = STAGES.indexOf(lead.status as typeof STAGES[number]);
-  const canAdvance = currentStageIdx >= 0 && currentStageIdx < STAGES.length - 1;
-  const canRevert = currentStageIdx > 0;
-  const staleDays = (nowMs != null && lead.last_touch_at)
-    ? Math.floor((nowMs - new Date(lead.last_touch_at).getTime()) / (1000 * 60 * 60 * 24))
-    : null;
-  const newDays = (nowMs != null && !lead.last_touch_at)
-    ? Math.floor((nowMs - new Date(lead.created_at).getTime()) / (1000 * 60 * 60 * 24))
-    : null;
-
-  // Sequence analytics
-  const sentCount = sequences.filter(s => s.status === 'sent').length;
-  const pendingCount = sequences.filter(s => s.status === 'pending_approval').length;
-  const totalSteps = sequences.length;
-
-  return (
-    <div className="panel sticky top-24 animate-slide-in max-h-[calc(100vh-8rem)] overflow-y-auto">
-      {/* Feedback */}
-      {feedback && (
-        <div className={`mx-5 mt-5 text-xs px-3 py-1.5 rounded-lg flex items-center gap-2 animate-in ${
-          feedback.type === 'success' ? 'bg-success/15 text-success' : 'bg-destructive/15 text-destructive'
-        }`}>
-          {feedback.type === 'success' ? <Check size={12} /> : <XCircle size={12} />}
-          {feedback.msg}
-        </div>
-      )}
-
-      {/* Header */}
-      <div className="panel-header">
-        <div>
-          <h3 className="font-semibold">{lead.first_name} {lead.last_name}</h3>
-          <p className="text-xs text-muted-foreground">{lead.title} at {lead.company}</p>
-          {!canEdit && <p className="text-[10px] text-muted-foreground mt-0.5">Read-only</p>}
-        </div>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-          <X size={16} />
-        </button>
-      </div>
-
-      <div className="panel-body space-y-4">
-
-      {/* Contact Info */}
-      <div className="space-y-1.5">
-        {lead.email && (
-          <a href={`mailto:${lead.email}`} className="flex items-center gap-2 text-xs hover:text-primary transition-colors">
-            <Mail size={12} className="text-muted-foreground shrink-0" />
-            <span className="font-mono truncate">{lead.email}</span>
-          </a>
-        )}
-        {lead.linkedin_url && (
-          <a href={lead.linkedin_url.startsWith('http') ? lead.linkedin_url : `https://${lead.linkedin_url}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs hover:text-primary transition-colors">
-            <Linkedin size={12} className="text-muted-foreground shrink-0" />
-            <span className="truncate">{lead.linkedin_url}</span>
-          </a>
-        )}
-      </div>
-
-      {/* Stats Row */}
-      <div className="grid grid-cols-3 gap-2">
-        <div className="bg-muted/30 rounded-lg p-2 text-center">
-          <div className="text-sm font-semibold">{lead.score ?? '\u2014'}</div>
-          <div className="text-[9px] text-muted-foreground uppercase">Score</div>
-        </div>
-        <div className="bg-muted/30 rounded-lg p-2 text-center">
-          <select
-            value={lead.tier || ''}
-            onChange={e => patchLead({ tier: e.target.value || null })}
-            disabled={!canEdit || saving}
-            className="bg-transparent text-sm font-semibold text-center w-full cursor-pointer focus:outline-none disabled:opacity-50"
-          >
-            <option value="">--</option>
-            <option value="A">A</option>
-            <option value="B">B</option>
-            <option value="C">C</option>
-          </select>
-          <div className="text-[9px] text-muted-foreground uppercase">Tier</div>
-        </div>
-        <div className="bg-muted/30 rounded-lg p-2 text-center">
-          <div className="text-sm font-semibold capitalize">{lead.status}</div>
-          <div className="text-[9px] text-muted-foreground uppercase">Stage</div>
-        </div>
-      </div>
-
-      {/* Stage Controls */}
-      <div className="flex items-center gap-2">
-        <button
-          disabled={!canEdit || !canRevert || saving}
-          onClick={() => patchLead({ status: STAGES[currentStageIdx - 1] })}
-          className="btn btn-ghost btn-sm flex-1 disabled:opacity-30"
-          title="Previous stage"
-        >
-          <ChevronLeft size={14} />
-          {canRevert ? STAGES[currentStageIdx - 1] : 'Back'}
-        </button>
-        <button
-          disabled={!canEdit || !canAdvance || saving}
-          onClick={() => patchLead({ status: STAGES[currentStageIdx + 1] })}
-          className="btn btn-sm flex-1 bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-30"
-          title="Advance stage"
-        >
-          {canAdvance ? STAGES[currentStageIdx + 1] : 'Done'}
-          <ChevronRight size={14} />
-        </button>
-        {lead.status !== 'disqualified' && lead.status !== 'rejected' && (
-          <button
-            disabled={!canEdit || saving}
-            onClick={() => patchLead({ status: 'disqualified' })}
-            className="btn btn-ghost btn-sm text-destructive hover:bg-destructive/10"
-            title="Disqualify"
-          >
-            <Ban size={14} />
-          </button>
-        )}
-      </div>
-
-      {/* Lead Triage */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => patchLead({ status: 'approved' })}
-          disabled={!canEdit || saving || lead.status === 'approved'}
-          className="btn btn-sm bg-success/15 text-success hover:bg-success/25 disabled:opacity-40"
-        >
-          <Check size={12} /> Approve Lead
-        </button>
-        <button
-          onClick={() => patchLead({ status: 'rejected' })}
-          disabled={!canEdit || saving || lead.status === 'rejected'}
-          className="btn btn-sm bg-destructive/15 text-destructive hover:bg-destructive/25 disabled:opacity-40"
-        >
-          <XCircle size={12} /> Reject Lead
-        </button>
-      </div>
-
-      {/* Pause Toggle */}
-      <button
-        onClick={() => patchLead({ pause_outreach: isPaused ? 0 : 1 })}
-        disabled={!canEdit || saving}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-          isPaused
-            ? 'bg-warning/15 text-warning border border-warning/30'
-            : 'bg-muted/30 text-muted-foreground hover:bg-muted/50'
-        }`}
-      >
-        <span className="flex items-center gap-2">
-          {isPaused ? <Pause size={12} /> : <Play size={12} />}
-          {isPaused ? 'Outreach Paused' : 'Outreach Active'}
-        </span>
-        <span className="text-[10px] opacity-70">{isPaused ? 'Click to resume' : 'Click to pause'}</span>
-      </button>
-
-      {/* Details */}
-      <div className="space-y-1 text-xs">
-        {lead.industry_segment && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Industry</span><span>{lead.industry_segment}</span></div>
-        )}
-        {lead.company_size && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Size</span><span>{lead.company_size}</span></div>
-        )}
-        {lead.source && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Source</span><span>{lead.source}</span></div>
-        )}
-        {lead.sequence_name && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Sequence</span><span>{lead.sequence_name}</span></div>
-        )}
-        {lead.last_touch_at && (
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Last Touch</span>
-            <span className={`px-2 py-0.5 rounded-full ${
-              staleDays !== null && staleDays > slaStaleDays
-                ? 'bg-destructive/15 text-destructive'
-                : staleDays !== null && staleDays > Math.max(1, Math.floor(slaStaleDays / 3))
-                  ? 'bg-warning/15 text-warning'
-                  : 'bg-success/15 text-success'
-            }`}>
-              {timeAgo(lead.last_touch_at)}
-            </span>
-          </div>
-        )}
-        {!lead.last_touch_at && newDays !== null && (
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">New Lead SLA</span>
-            <span className={`px-2 py-0.5 rounded-full ${
-              newDays > slaNewDays ? 'bg-destructive/15 text-destructive' : 'bg-warning/15 text-warning'
-            }`}>
-              {newDays}d
-            </span>
-          </div>
-        )}
-        <div className="flex justify-between items-center gap-2">
-          <span className="text-muted-foreground">Next Action</span>
-          <input
-            type="date"
-            value={nextAction}
-            onChange={e => setNextAction(e.target.value)}
-            className="bg-muted/30 rounded px-2 py-0.5 text-[10px]"
-            disabled={!canEdit || saving}
-          />
-          <button
-            onClick={() => patchLead({ next_action_at: nextAction ? new Date(`${nextAction}T00:00:00.000Z`).toISOString() : null })}
-            disabled={!canEdit || saving}
-            className="btn btn-ghost btn-sm text-[10px]"
-          >
-            Save
-          </button>
-        </div>
-        {lead.reply_type && (
-          <div className="flex justify-between"><span className="text-muted-foreground">Reply Type</span><span className="capitalize">{lead.reply_type.replace('_', ' ')}</span></div>
-        )}
-      </div>
-
-      {/* Notes */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <Edit3 size={12} /> Notes
-          </h4>
-          {!editingNotes && canEdit && (
-            <button
-              onClick={() => { setEditingNotes(true); setNotesValue(lead.notes || ''); }}
-              className="text-[10px] text-primary hover:underline"
-            >
-              Edit
-            </button>
-          )}
-        </div>
-        {editingNotes ? (
-          <div className="space-y-2">
-            <textarea
-              value={notesValue}
-              onChange={e => setNotesValue(e.target.value)}
-              placeholder="Add notes about this lead..."
-              rows={3}
-              className="w-full text-xs resize-none"
-            />
-            <div className="flex items-center gap-2 justify-end">
-              <button onClick={() => setEditingNotes(false)} className="btn btn-ghost btn-sm text-xs">Cancel</button>
-              <button
-                onClick={() => { patchLead({ notes: notesValue }); setEditingNotes(false); }}
-                disabled={!canEdit || saving}
-                className="btn btn-sm text-xs bg-primary/15 text-primary hover:bg-primary/25"
-              >
-                <Save size={12} /> Save
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-muted/20 rounded-lg p-3 text-xs min-h-[2rem]">
-            {lead.notes || <span className="text-muted-foreground italic">No notes yet</span>}
-          </div>
-        )}
-      </div>
-
-      {/* Timeline */}
-      {timeline.length > 0 && (
-        <div>
-          <h4 className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
-            <Clock size={12} /> Timeline
-          </h4>
-          <div className="space-y-3 relative before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-border">
-            {timeline.map(event => (
-              <div key={event.id} className="flex items-start gap-3 pl-0 relative">
-                <div className={`w-[15px] h-[15px] rounded-full border-2 border-background shrink-0 z-10 ${
-                  event.type === 'pending_approval' ? 'bg-warning' :
-                  event.type === 'approved' ? 'bg-success' :
-                  'bg-muted'
-                }`} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs leading-relaxed">{event.description}</p>
-                  <p className="text-[10px] text-muted-foreground">{timeAgo(event.timestamp)}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Email Sequences */}
-      {sequences.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <Send size={12} /> Email Sequences ({sequences.length})
-            </h4>
-            {/* Mini analytics */}
-            <div className="flex items-center gap-2 text-[10px]">
-              {sentCount > 0 && (
-                <span className="text-success">{sentCount} sent</span>
-              )}
-              {pendingCount > 0 && (
-                <span className="text-warning">{pendingCount} pending</span>
-              )}
-            </div>
-          </div>
-
-          {/* Progress bar */}
-          {totalSteps > 0 && (
-            <div className="flex items-center gap-1.5 mb-2">
-              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden flex">
-                <div
-                  className="h-full bg-success transition-all"
-                  style={{ width: `${(sentCount / totalSteps) * 100}%` }}
-                />
-                <div
-                  className="h-full bg-warning transition-all"
-                  style={{ width: `${(pendingCount / totalSteps) * 100}%` }}
-                />
-              </div>
-              <span className="text-[9px] text-muted-foreground font-mono">
-                {sentCount}/{totalSteps}
-              </span>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            {sequences.map(seq => (
-              <div key={seq.id} className="bg-muted/20 rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setExpandedSeq(expandedSeq === seq.id ? null : seq.id)}
-                  className="w-full flex items-center justify-between text-xs px-3 py-2 hover:bg-muted/30 transition-colors"
-                >
-                  <div className="truncate text-left">
-                    <span className="text-muted-foreground">Step {seq.step}: </span>
-                    {seq.subject || 'No subject'}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <span className={`${
-                      seq.status === 'sent' ? 'text-success' :
-                      seq.status === 'pending_approval' ? 'text-warning' :
-                      seq.status === 'approved' ? 'text-info' :
-                      seq.status === 'cancelled' ? 'text-destructive' :
-                      'text-muted-foreground'
-                    }`}>
-                      {seq.status === 'pending_approval' ? 'pending' : seq.status}
-                    </span>
-                    {expandedSeq === seq.id ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </div>
-                </button>
-
-                {expandedSeq === seq.id && (
-                  <div className="border-t border-border/20 px-3 py-2 space-y-2">
-                    {seq.body ? (
-                      <div className="text-xs bg-background/50 rounded p-2 whitespace-pre-wrap max-h-40 overflow-y-auto font-mono leading-relaxed">
-                        {seq.body}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-muted-foreground italic">No email body available</p>
-                    )}
-                    {seq.scheduled_for && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Scheduled: {new Date(seq.scheduled_for).toLocaleString()}
-                      </p>
-                    )}
-                    {seq.sent_at && (
-                      <p className="text-[10px] text-muted-foreground">
-                        Sent: {new Date(seq.sent_at).toLocaleString()}
-                      </p>
-                    )}
-
-                    {seq.status === 'pending_approval' && canEdit && (
-                      <div className="flex items-center gap-2 pt-1">
-                        <button
-                          onClick={() => patchSequence(seq.id, 'approved')}
-                          disabled={saving}
-                          className="btn btn-sm text-xs bg-success/15 text-success hover:bg-success/25 flex-1"
-                        >
-                          <Check size={12} /> Approve
-                        </button>
-                        <button
-                          onClick={() => patchSequence(seq.id, 'cancelled')}
-                          disabled={saving}
-                          className="btn btn-sm text-xs bg-destructive/15 text-destructive hover:bg-destructive/25 flex-1"
-                        >
-                          <XCircle size={12} /> Reject
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      </div>
-    </div>
-  );
-}
+/* Lead detail panel extracted to src/components/crm/lead-detail-panel.tsx */

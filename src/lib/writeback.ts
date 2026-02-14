@@ -3,7 +3,39 @@ import path from 'path';
 
 import { getHermesStateDir } from '@/lib/hermes-state';
 
-const STATE_DIR = getHermesStateDir();
+type JsonRow = Record<string, unknown>;
+type WrappedArray = { leads: JsonRow[] } & Record<string, unknown>;
+
+function getStateDir(): string {
+  return getHermesStateDir();
+}
+
+function safeReadJson(filePath: string): unknown {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function atomicWriteJson(filePath: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmp, filePath);
+}
+
+function getArrayContainer(
+  data: unknown,
+): { kind: 'array'; arr: JsonRow[] } | { kind: 'wrapped'; obj: WrappedArray; arr: JsonRow[] } | null {
+  if (Array.isArray(data)) return { kind: 'array', arr: data as JsonRow[] };
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as Record<string, unknown>;
+  const leads = obj.leads;
+  if (!Array.isArray(leads)) return null;
+  return { kind: 'wrapped', obj: obj as WrappedArray, arr: leads as JsonRow[] };
+}
 
 /**
  * Write a status change back to a JSON state file so the Hermes agent picks it up.
@@ -15,21 +47,56 @@ function updateJsonFile(
   id: string,
   updates: Record<string, unknown>,
 ) {
-  const filePath = path.join(STATE_DIR, filename);
   try {
+    const filePath = path.join(getStateDir(), filename);
     if (!fs.existsSync(filePath)) return;
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const data = JSON.parse(raw);
-
-    if (Array.isArray(data)) {
-      const item = data.find((d: Record<string, unknown>) => d.id === id);
-      if (item) {
-        Object.assign(item, updates);
-        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-      }
-    }
+    const data = safeReadJson(filePath);
+    const container = getArrayContainer(data);
+    if (!container) return;
+    const item = container.arr.find((d) => d?.id === id);
+    if (!item) return;
+    Object.assign(item, updates);
+    if (container.kind === 'array') atomicWriteJson(filePath, container.arr);
+    else atomicWriteJson(filePath, { ...container.obj, leads: container.arr });
   } catch {
     // Silently fail — state files may not exist in local dev
+  }
+}
+
+function appendJsonFile(filename: string, row: Record<string, unknown>): void {
+  const filePath = path.join(getStateDir(), filename);
+  try {
+    const exists = fs.existsSync(filePath);
+    const data = exists ? safeReadJson(filePath) : [];
+    const container = getArrayContainer(data) ?? { kind: 'array' as const, arr: [] as JsonRow[] };
+
+    const id = row.id;
+    const idx = container.arr.findIndex((d) => d?.id === id);
+    if (idx >= 0) {
+      container.arr[idx] = { ...container.arr[idx], ...row };
+    } else {
+      container.arr.unshift(row);
+    }
+
+    if (container.kind === 'array') atomicWriteJson(filePath, container.arr);
+    else atomicWriteJson(filePath, { ...container.obj, leads: container.arr });
+  } catch {
+    // ignore
+  }
+}
+
+function deleteFromJsonFile(filename: string, id: string): void {
+  const filePath = path.join(getStateDir(), filename);
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const data = safeReadJson(filePath);
+    const container = getArrayContainer(data);
+    if (!container) return;
+    const next = container.arr.filter((d) => d?.id !== id);
+    if (container.kind === 'array') atomicWriteJson(filePath, next);
+    else atomicWriteJson(filePath, { ...container.obj, leads: next });
+  } catch {
+    // ignore
   }
 }
 
@@ -51,4 +118,14 @@ export function writebackLeadStatus(id: string, status: string) {
 /** Update arbitrary lead fields in leads.json */
 export function writebackLeadUpdate(id: string, updates: Record<string, unknown>) {
   updateJsonFile('leads.json', id, updates);
+}
+
+/** Append or upsert a lead into leads.json */
+export function writebackLeadCreate(lead: Record<string, unknown>) {
+  appendJsonFile('leads.json', lead);
+}
+
+/** Remove a lead from leads.json */
+export function writebackLeadDelete(id: string) {
+  deleteFromJsonFile('leads.json', id);
 }

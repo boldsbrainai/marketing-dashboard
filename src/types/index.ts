@@ -343,6 +343,28 @@ export interface MemoryDriftPayload {
   };
 }
 
+export type MemoryAlertSeverity = 'info' | 'warning' | 'error';
+
+export interface MemoryAlertItem {
+  key: string;
+  type: string;
+  severity: MemoryAlertSeverity;
+  title: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+export interface MemoryAlertsPayload {
+  active: MemoryAlertItem[];
+  new: MemoryAlertItem[];
+  thresholds: {
+    contradictions: number;
+    duplicates: number;
+    weak_agents: number;
+    never_ratio: number;
+  };
+}
+
 export interface FunnelStep {
   name: string;
   value: number;

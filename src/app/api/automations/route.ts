@@ -125,12 +125,6 @@ export async function GET(request: Request) {
   const cronRunsDir = path.join(cronDir, 'runs');
   const db = getDb();
 
-  const pendingContent = db.prepare(
-    `SELECT id, platform, text_preview, status, created_at
-     FROM content_posts WHERE status = 'pending_approval'
-     ORDER BY created_at DESC LIMIT 20`
-  ).all() as { id: string; platform: string; text_preview: string | null; status: string; created_at: string }[];
-
   const pendingEmails = db.prepare(
     `SELECT s.id, s.subject, s.tier, s.status, s.created_at, l.first_name, l.last_name, l.company
      FROM sequences s LEFT JOIN leads l ON s.lead_id = l.id
@@ -139,15 +133,6 @@ export async function GET(request: Request) {
   ).all() as { id: string; subject: string | null; tier: string | null; status: string; created_at: string; first_name: string | null; last_name: string | null; company: string | null }[];
 
   const approvals: ApprovalItem[] = [
-    ...pendingContent.map(c => ({
-      id: c.id,
-      type: 'content' as const,
-      title: `${c.platform.toUpperCase()} post`,
-      preview: c.text_preview || '(no preview)',
-      agent: 'hermes',
-      created_at: c.created_at,
-      platform: c.platform,
-    })),
     ...pendingEmails.map(e => ({
       id: e.id,
       type: 'email' as const,
