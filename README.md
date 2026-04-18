@@ -33,12 +33,12 @@ Hermes is built for operator-led AI marketing systems where you need execution v
 ## Screenshots
 
 ### Overview
+
 ![Hermes Dashboard CRM](./public/hermes-dashboard-mission-control.png)
 
 ### CRM
+
 ![Hermes Dashboard Overview](./public/hermes-dashboard-overview.png)
-
-
 
 ## Quick Start
 
@@ -55,6 +55,15 @@ pnpm dev
 Open `http://localhost:3000`.
 
 Initial admin access is seeded from `AUTH_USER` / `AUTH_PASS` on first run when the users table is empty.
+
+### Windows Recommendation
+
+On Windows, prefer one of these two paths:
+
+1. Run the repo inside WSL2 Ubuntu for local development and standalone builds.
+2. Run the app through Docker Desktop with the provided [compose.yaml](compose.yaml).
+
+The repo's env bootstrap and standalone asset preparation now run through Node scripts instead of shell-specific bash commands, so `pnpm env:bootstrap` and `pnpm build` behave consistently on Windows, WSL2, and Linux.
 
 ## Project Status
 
@@ -134,6 +143,24 @@ pnpm test
 pnpm test:e2e
 ```
 
+## WSL2 Baseline
+
+If you want a predictable WSL2 footprint on this class of machine, use [ops/wsl/wslconfig.example](ops/wsl/wslconfig.example) as the baseline for `%UserProfile%\.wslconfig`, then restart WSL with `wsl --shutdown`.
+
+The suggested profile caps WSL2 to 28 GB RAM, 16 vCPUs, and 8 GB swap so Docker Desktop, Ollama, and the Windows host do not fight for all 64 GB at once.
+
+## Docker
+
+For a standardized container path:
+
+```bash
+docker compose up --build
+```
+
+The compose file exposes the dashboard on port 3000, persists Hermes state in a named Docker volume, and points Ollama traffic at `host.docker.internal:11434` by default.
+
+If you want filesystem-backed OpenClaw discovery inside the container, mount your OpenClaw home into `/openclaw` through a local compose override.
+
 ## Template Export and Hygiene
 
 Before publishing as a template or sharing broadly:
@@ -153,8 +180,6 @@ Export excludes sensitive/runtime artifacts like `.env*`, database files, `.next
 - Code of Conduct: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 - Third-Party Notices: [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
 
-
-
 ## Contributing
 
 Contributions welcome. Read the [contribution guidelines](CONTRIBUTING.md) first.
@@ -168,7 +193,6 @@ If you find this project useful, consider supporting my open-source work.
 **Solana donations**
 
 `BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
-
 
 ---
 
@@ -196,4 +220,3 @@ related or neighboring rights to this work.
     <img src="https://api.star-history.com/svg?repos=your-org/hermes-dashboard&type=Date" alt="Star History" width="400">
   </a>
 </p>
-

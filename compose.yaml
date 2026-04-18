@@ -1,0 +1,27 @@
+services:
+  hermes-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hermes-dashboard:local
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      AUTH_USER: ${AUTH_USER:-admin}
+      AUTH_PASS: ${AUTH_PASS:-change-me-in-compose}
+      API_KEY: ${API_KEY:-change-me-in-compose}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      HERMES_STATE_DIR: /app/state
+      HERMES_DB_PATH: /app/state/hermes.db
+      HERMES_OPENCLAW_HOME: ${HERMES_OPENCLAW_HOME:-/openclaw}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - hermes_state:/app/state
+
+volumes:
+  hermes_state:
