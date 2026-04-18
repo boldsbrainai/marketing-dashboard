@@ -49,6 +49,8 @@ interface CronRun {
 
 interface ModelHealth {
   ok?: boolean;
+  models?: string[];
+  required?: string[];
   running?: { name: string; expires_at?: string }[];
 }
 
@@ -67,6 +69,11 @@ function formatRunTs(ts?: number | string | null) {
 function normalizeModel(model?: string | null) {
   if (!model) return null;
   return model.replace(/^ollama\//, '');
+}
+
+function getPreferredCronModel(modelHealth?: ModelHealth | null): string {
+  const candidate = modelHealth?.required?.[0] || modelHealth?.models?.[0] || 'qwen3.6:latest';
+  return candidate.startsWith('ollama/') ? candidate : `ollama/${candidate}`;
 }
 
 export function CronBoard({ variant = 'embedded' }: { variant?: 'page' | 'embedded' }) {
@@ -148,6 +155,7 @@ export function CronBoard({ variant = 'embedded' }: { variant?: 'page' | 'embedd
   };
 
   const openCreate = () => {
+    const preferredModel = getPreferredCronModel(modelHealth);
     setEditError(null);
     setEditMode('create');
     setEditJobId(null);
@@ -164,7 +172,7 @@ export function CronBoard({ variant = 'embedded' }: { variant?: 'page' | 'embedd
         kind: 'agentTurn',
         message: 'Describe what this cron should do and where it should write results.',
         thinking: 'low',
-        model: 'ollama/qwen2.5-coder:7b',
+        model: preferredModel,
       },
       delivery: { mode: 'none' },
       skill: 'custom',
@@ -286,7 +294,7 @@ export function CronBoard({ variant = 'embedded' }: { variant?: 'page' | 'embedd
   const innerGridClass = variant === 'page' ? 'grid grid-cols-1 lg:grid-cols-2 gap-4' : 'grid grid-cols-1 lg:grid-cols-2 gap-4';
 
   return (
-      <div className={wrapperClass}>
+    <div className={wrapperClass}>
       {editOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <button
